@@ -7,7 +7,7 @@ import requests
 import json
 
 # Configure o IP do seu ESP32 aqui
-ESP32_IP = "192.168.0.119"  # Substitua pelo IP real do seu ESP32
+ESP32_IP = "192.168.0.114"  # Substitua pelo IP real do seu ESP32
 BASE_URL = f"http://{ESP32_IP}"
 
 def testar_seno(angulo):
@@ -35,7 +35,7 @@ def main():
     print("=== Teste da API ESP32 - Cálculo de Seno ===\n")
     
     # Ângulos de teste
-    angulos_teste = [ 90,30,45]
+    angulos_teste = [ 0,90,30,45,180]
     
     print(f"Conectando ao ESP32 em: {BASE_URL}\n")
     
