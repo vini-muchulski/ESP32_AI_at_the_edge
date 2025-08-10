@@ -23,8 +23,8 @@
 #include "tensorflow/lite/schema/schema_generated.h"
 
 // Configurações WiFi - ALTERE AQUI
-const char* ssid = "Starlink";
-const char* password = "diversao";
+const char* ssid = "REDE WIFI";
+const char* password = "PASSWORD";
 const int serverPort = 80;
 
 // Servidor WiFi

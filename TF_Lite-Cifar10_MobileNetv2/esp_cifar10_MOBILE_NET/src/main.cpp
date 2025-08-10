@@ -12,8 +12,8 @@
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 
-const char *ssid = "Starlink";
-const char *password = "diversao";
+const char *ssid = "REDE WIFI";
+const char *password = "PASSWORD";
 const int serverPort = 80;
 
 WiFiServer server(serverPort);

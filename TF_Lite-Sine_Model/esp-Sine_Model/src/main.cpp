@@ -10,8 +10,8 @@
 #include <Arduino.h>
 #include <math.h>                     // para M_PI
 
-const char* ssid = "Starlink";
-const char* password = "diversao";
+const char* ssid = "REDE WIFI";
+const char* password = "PASSWORD";
 
 // Servidor web na porta 80
 WebServer server(80);

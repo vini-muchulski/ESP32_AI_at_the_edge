@@ -16,8 +16,8 @@
 #include "human_face_detect.hpp"
 
 // --- CONFIGURAÇÃO DE REDE ---
-#define WIFI_SSID      "Starlink"
-#define WIFI_PASS      "diversao"
+#define WIFI_SSID      "REDE WIFI"
+#define WIFI_PASS      "PASSWORD"
 #define TCP_PORT       3333
 
 static const char *TAG = "FACE_DETECT_WIFI";
