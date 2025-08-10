@@ -4,9 +4,9 @@ import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
 
-ESP32_IP = "192.168.0.116"
+ESP32_IP = "192.168.0.111"
 API_URL = f"http://{ESP32_IP}/predict"
-IMAGE_INDEX = 3
+IMAGE_INDEX = 5
 
 def get_mnist_image(index: int):
     try:
