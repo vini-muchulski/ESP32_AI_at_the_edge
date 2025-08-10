@@ -11,7 +11,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 warnings.filterwarnings('ignore')
 logging.getLogger('tensorflow').setLevel(logging.ERROR)
 
-ESP32_IP = "192.168.0.116"
+ESP32_IP = "192.168.0.111"
 PREDICT_URL = f"http://{ESP32_IP}/predict"
 REQUEST_TIMEOUT = 10
 
@@ -58,7 +58,7 @@ def plot_prediction(image, true_name, predicted_name, confidence):
     plt.show()
 
 def main():
-    image_index = 1
+    image_index = 10
     
     image, true_label_index, true_label_name = get_cifar10_sample(image_index)
 
