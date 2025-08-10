@@ -70,7 +70,7 @@ def plot_faces_from_log(log_str: str, img_path: str, output_path: str = None):
 if __name__ == '__main__':
     # Exemplo de uso com o seu log que só tem bbox:
     log = """
-I (797350) FACE_DETECT_WIFI: [score: 0.78, x1: 86, y1: 44, x2: 128, y2: 111]
-I (797350) FACE_DETECT_WIFI: [score: 0.59, x1: 203, y1: 44, x2: 249, y2: 114]
+I (136451) FACE_DETECT_WIFI: [score: 0.78, x1: 86, y1: 44, x2: 128, y2: 111]
+I (136451) FACE_DETECT_WIFI: [score: 0.59, x1: 203, y1: 44, x2: 249, y2: 114]
     """
     plot_faces_from_log(log, 'imagens/jesse_ww_crop_resized.jpg', 'imagens/results_exemplos/resultado.jpg')
