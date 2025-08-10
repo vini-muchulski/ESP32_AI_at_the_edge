@@ -4,6 +4,7 @@
 
 Conjunto de exemplos práticos para rodar **IA em microcontroladores ESP32**, com **TensorFlow Lite for Microcontrollers (TFLM)** e **ESP-DL**. Os projetos cobrem desde o clássico *Hello World* ( previsão do seno de um angulo) até classificadores (MNIST e CIFAR-10) e detecção de faces no dispositivo.
 
+![Face Detection Result 1](ESP-DL-face-detect/examples/human_face_detect/main/imagens/results_exemplos/human_face_save.jpg)![Face Detection Result 2](ESP-DL-face-detect/examples/human_face_detect/main/imagens/results_exemplos/resultado.jpg)![MNIST Digit Inference Result](TF_Lite-MNIST_Digits/esp_mnist_digitos_wifi_ESPS3/esp_mnist_digitos_wifi/src/inference_result.png)
 ## Estrutura do repositório
 
 ```

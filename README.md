@@ -1,7 +1,8 @@
-
 # ESP32 AI at the Edge
 
 A set of practical examples for running **AI on ESP32 microcontrollers**, using **TensorFlow Lite for Microcontrollers (TFLM)** and **ESP-DL**. The projects range from the classic *Hello World* (predicting the sine of an angle) to classifiers (MNIST and CIFAR-10) and on-device face detection.
+
+![Face Detection Result 1](ESP-DL-face-detect/examples/human_face_detect/main/imagens/results_exemplos/human_face_save.jpg)![Face Detection Result 2](ESP-DL-face-detect/examples/human_face_detect/main/imagens/results_exemplos/resultado.jpg)![MNIST Digit Inference Result](TF_Lite-MNIST_Digits/esp_mnist_digitos_wifi_ESPS3/esp_mnist_digitos_wifi/src/inference_result.png)
 
 ## Repository Structure
 
