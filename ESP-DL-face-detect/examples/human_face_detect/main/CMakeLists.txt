@@ -1,0 +1,23 @@
+set(src_dirs        ./)
+
+set(include_dirs    ./)
+
+set(requires        human_face_detect)
+
+if (IDF_TARGET STREQUAL "esp32s3")
+    list(APPEND requires esp32_s3_eye_noglib
+                         esp_lcd)
+elseif (IDF_TARGET STREQUAL "esp32p4")
+    list(APPEND requires esp32_p4_function_ev_board_noglib
+                         esp_lcd)
+endif()
+
+# set(embed_files     "human_face.jpg")
+list(APPEND requires
+    esp_wifi
+    esp_event
+    nvs_flash
+    lwip
+)
+
+idf_component_register(SRC_DIRS ${src_dirs} INCLUDE_DIRS ${include_dirs} REQUIRES ${requires} EMBED_FILES ${embed_files})

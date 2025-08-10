@@ -1,0 +1,106 @@
+  Testing image   1/100 (True: cat        ) ... Correct.
+  Testing image   2/100 (True: ship       ) ... Correct.
+  Testing image   3/100 (True: ship       ) ... Incorrect. (Predicted: truck)
+  Testing image   4/100 (True: airplane   ) ... Incorrect. (Predicted: cat)
+  Testing image   5/100 (True: frog       ) ... Incorrect. (Predicted: deer)
+  Testing image   6/100 (True: frog       ) ... Incorrect. (Predicted: bird)
+  Testing image   7/100 (True: automobile ) ... Incorrect. (Predicted: cat)
+  Testing image   8/100 (True: frog       ) ... Incorrect. (Predicted: cat)
+  Testing image   9/100 (True: cat        ) ... Incorrect. (Predicted: deer)
+  Testing image  10/100 (True: automobile ) ... Incorrect. (Predicted: truck)
+  Testing image  11/100 (True: airplane   ) ... Correct.
+  Testing image  12/100 (True: truck      ) ... Correct.
+  Testing image  13/100 (True: dog        ) ... Incorrect. (Predicted: deer)
+  Testing image  14/100 (True: horse      ) ... Correct.
+  Testing image  15/100 (True: truck      ) ... Correct.
+  Testing image  16/100 (True: ship       ) ... Incorrect. (Predicted: bird)
+  Testing image  17/100 (True: dog        ) ... Incorrect. (Predicted: cat)
+  Testing image  18/100 (True: horse      ) ... Incorrect. (Predicted: deer)
+  Testing image  19/100 (True: ship       ) ... Correct.
+  Testing image  20/100 (True: frog       ) ... Incorrect. (Predicted: cat)
+  Testing image  21/100 (True: horse      ) ... Correct.
+  Testing image  22/100 (True: airplane   ) ... Correct.
+  Testing image  23/100 (True: deer       ) ... Correct.
+  Testing image  24/100 (True: truck      ) ... Correct.
+  Testing image  25/100 (True: dog        ) ... Incorrect. (Predicted: deer)
+  Testing image  26/100 (True: bird       ) ... Correct.
+  Testing image  27/100 (True: deer       ) ... Incorrect. (Predicted: cat)
+  Testing image  28/100 (True: airplane   ) ... Incorrect. (Predicted: cat)
+  Testing image  29/100 (True: truck      ) ... Incorrect. (Predicted: deer)
+  Testing image  30/100 (True: frog       ) ... Incorrect. (Predicted: deer)
+  Testing image  31/100 (True: frog       ) ... Incorrect. (Predicted: horse)
+  Testing image  32/100 (True: dog        ) ... Incorrect. (Predicted: cat)
+  Testing image  33/100 (True: deer       ) ... Correct.
+  Testing image  34/100 (True: dog        ) ... Incorrect. (Predicted: deer)
+  Testing image  35/100 (True: truck      ) ... Correct.
+  Testing image  36/100 (True: bird       ) ... Incorrect. (Predicted: cat)
+  Testing image  37/100 (True: deer       ) ... Correct.
+  Testing image  38/100 (True: automobile ) ... Incorrect. (Predicted: bird)
+  Testing image  39/100 (True: truck      ) ... Correct.
+  Testing image  40/100 (True: dog        ) ... Incorrect. (Predicted: cat)
+  Testing image  41/100 (True: deer       ) ... Correct.
+  Testing image  42/100 (True: frog       ) ... Incorrect. (Predicted: cat)
+  Testing image  43/100 (True: dog        ) ... Incorrect. (Predicted: cat)
+  Testing image  44/100 (True: frog       ) ... Incorrect. (Predicted: cat)
+  Testing image  45/100 (True: airplane   ) ... Incorrect. (Predicted: ship)
+  Testing image  46/100 (True: truck      ) ... Correct.
+  Testing image  47/100 (True: cat        ) ... Correct.
+  Testing image  48/100 (True: truck      ) ... Correct.
+  Testing image  49/100 (True: horse      ) ... Incorrect. (Predicted: deer)
+  Testing image  50/100 (True: frog       ) ... Incorrect. (Predicted: deer)
+  Testing image  51/100 (True: truck      ) ... Incorrect. (Predicted: deer)
+  Testing image  52/100 (True: ship       ) ... Correct.
+  Testing image  53/100 (True: airplane   ) ... Incorrect. (Predicted: cat)
+  Testing image  54/100 (True: cat        ) ... Correct.
+  Testing image  55/100 (True: ship       ) ... Correct.
+  Testing image  56/100 (True: ship       ) ... Correct.
+  Testing image  57/100 (True: horse      ) ... Incorrect. (Predicted: deer)
+  Testing image  58/100 (True: horse      ) ... Incorrect. (Predicted: cat)
+  Testing image  59/100 (True: deer       ) ... Correct.
+  Testing image  60/100 (True: frog       ) ... Incorrect. (Predicted: deer)
+  Testing image  61/100 (True: horse      ) ... Correct.
+  Testing image  62/100 (True: cat        ) ... Correct.
+  Testing image  63/100 (True: frog       ) ... Incorrect. (Predicted: cat)
+  Testing image  64/100 (True: cat        ) ... Correct.
+  Testing image  65/100 (True: frog       ) ... Incorrect. (Predicted: deer)
+  Testing image  66/100 (True: bird       ) ... Incorrect. (Predicted: deer)
+  Testing image  67/100 (True: automobile ) ... Incorrect. (Predicted: truck)
+  Testing image  68/100 (True: bird       ) ... Incorrect. (Predicted: deer)
+  Testing image  69/100 (True: cat        ) ... Correct.
+  Testing image  70/100 (True: horse      ) ... Incorrect. (Predicted: deer)
+  Testing image  71/100 (True: bird       ) ... Incorrect. (Predicted: cat)
+  Testing image  72/100 (True: frog       ) ... Incorrect. (Predicted: cat)
+  Testing image  73/100 (True: ship       ) ... Correct.
+  Testing image  74/100 (True: ship       ) ... Correct.
+  Testing image  75/100 (True: airplane   ) ... Incorrect. (Predicted: ship)
+  Testing image  76/100 (True: bird       ) ... Correct.
+  Testing image  77/100 (True: truck      ) ... Correct.
+  Testing image  78/100 (True: cat        ) ... Correct.
+  Testing image  79/100 (True: cat        ) ... Correct.
+  Testing image  80/100 (True: ship       ) ... Correct.
+  Testing image  81/100 (True: ship       ) ... Correct.
+  Testing image  82/100 (True: automobile ) ... Incorrect. (Predicted: truck)
+  Testing image  83/100 (True: automobile ) ... Correct.
+  Testing image  84/100 (True: horse      ) ... Incorrect. (Predicted: deer)
+  Testing image  85/100 (True: bird       ) ... Incorrect. (Predicted: cat)
+  Testing image  86/100 (True: dog        ) ... Incorrect. (Predicted: deer)
+  Testing image  87/100 (True: bird       ) ... Incorrect. (Predicted: cat)
+  Testing image  88/100 (True: horse      ) ... Correct.
+  Testing image  89/100 (True: ship       ) ... Correct.
+  Testing image  90/100 (True: truck      ) ... Correct.
+  Testing image  91/100 (True: airplane   ) ... Incorrect. (Predicted: truck)
+  Testing image  92/100 (True: cat        ) ... Correct.
+  Testing image  93/100 (True: ship       ) ... Correct.
+  Testing image  94/100 (True: frog       ) ... Incorrect. (Predicted: deer)
+  Testing image  95/100 (True: deer       ) ... Correct.
+  Testing image  96/100 (True: frog       ) ... Incorrect. (Predicted: deer)
+  Testing image  97/100 (True: frog       ) ... Incorrect. (Predicted: deer)
+  Testing image  98/100 (True: airplane   ) ... Correct.
+  Testing image  99/100 (True: airplane   ) ... Correct.
+  Testing image 100/100 (True: horse      ) ... Correct.
+
+--- Evaluation Summary ---
+Successful Tests:    100
+Correct Predictions: 47
+Accuracy:            47.00%
+--------------------------

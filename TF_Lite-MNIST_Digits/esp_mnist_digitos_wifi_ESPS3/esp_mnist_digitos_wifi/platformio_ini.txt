@@ -1,0 +1,12 @@
+[env:esp32psram]
+platform = espressif32
+board = esp-wrover-kit
+framework = arduino
+
+monitor_speed = 115200
+board_build.partitions = partitions_1mb_model.csv
+
+build_flags = 
+    -DBOARD_HAS_PSRAM 
+    -mfix-esp32-psram-cache-issue
+    -DCORE_DEBUG_LEVEL=3
