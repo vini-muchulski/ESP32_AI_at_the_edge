@@ -1,5 +1,8 @@
 #include <string.h>
 #include <vector>
+#include <string>
+#include <sstream>
+#include <iomanip>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
@@ -16,52 +19,56 @@
 #include "human_face_detect.hpp"
 
 // --- CONFIGURAÇÃO DE REDE ---
-#define WIFI_SSID      "REDE WIFI"
-#define WIFI_PASS      "PASSWORD"
+#define WIFI_SSID      "Starlink"
+#define WIFI_PASS      "diversao"
 #define TCP_PORT       3333
 
 static const char *TAG = "FACE_DETECT_WIFI";
 
-// --- Lógica de Detecção (refatorada do original) ---
-static void run_face_detection(const uint8_t* image_data, const size_t image_len)
+// --- Lógica de Detecção  ---
+static std::string run_face_detection(const uint8_t* image_data, const size_t image_len)
 {
     dl::image::jpeg_img_t jpeg_img = {
         .data = (void*)image_data,
         .data_len = image_len
     };
 
-    // Decodifica a imagem JPEG para o formato RGB888
     auto img = sw_decode_jpeg(jpeg_img, dl::image::DL_IMAGE_PIX_TYPE_RGB888);
     if (!img.data) {
         ESP_LOGE(TAG, "Falha ao decodificar imagem JPEG.");
-        return;
+        return "[]";
     }
 
     HumanFaceDetect *detect = new HumanFaceDetect();
     if (!detect) {
         ESP_LOGE(TAG, "Falha ao instanciar HumanFaceDetect.");
         heap_caps_free(img.data);
-        return;
+        return "[]";
     }
-    ESP_LOGI(TAG, "  ------------------------------- ");
-    ESP_LOGI(TAG, "    ");
-    ESP_LOGI(TAG, "    ");
-    ESP_LOGI(TAG, "  ------------------------------- ");
     ESP_LOGI(TAG, "Iniciando detecção de rostos...");
-    ESP_LOGI(TAG, "  ------------------------------- ");
-    ESP_LOGI(TAG, "    ");
-    ESP_LOGI(TAG, "    ");
 
     auto &detect_results = detect->run(img);
     ESP_LOGI(TAG, "Encontrados %d rostos.", detect_results.size());
 
+    std::stringstream json_stream;
+    json_stream << "[";
+    bool first_element = true;
     for (const auto &res : detect_results) {
-        ESP_LOGI(TAG, "[score: %.2f, x1: %d, y1: %d, x2: %d, y2: %d]",
-                 res.score, res.box[0], res.box[1], res.box[2], res.box[3]);
+        if (!first_element) {
+            json_stream << ",";
+        }
+        json_stream << std::fixed << std::setprecision(2)
+                    << "{\"score\":" << res.score
+                    << ",\"box\":[" << res.box[0] << "," << res.box[1] << ","
+                    << res.box[2] << "," << res.box[3] << "]}";
+        first_element = false;
     }
+    json_stream << "]";
     
     delete detect;
     heap_caps_free(img.data);
+
+    return json_stream.str();
 }
 
 // --- Lógica do Servidor TCP ---
@@ -69,14 +76,12 @@ static void tcp_server_task(void *pvParameters)
 {
     char addr_str[128];
     int addr_family = AF_INET;
-    int ip_protocol = 0;
-    struct sockaddr_in6 dest_addr;
+    int ip_protocol = IPPROTO_IP;
+    struct sockaddr_in dest_addr;
 
-    struct sockaddr_in *dest_addr_ip4 = (struct sockaddr_in *)&dest_addr;
-    dest_addr_ip4->sin_addr.s_addr = htonl(INADDR_ANY);
-    dest_addr_ip4->sin_family = AF_INET;
-    dest_addr_ip4->sin_port = htons(TCP_PORT);
-    ip_protocol = IPPROTO_IP;
+    dest_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_port = htons(TCP_PORT);
 
     int listen_sock = socket(addr_family, SOCK_STREAM, ip_protocol);
     if (listen_sock < 0) {
@@ -111,8 +116,8 @@ static void tcp_server_task(void *pvParameters)
         ESP_LOGI(TAG, "Socket aceito de: %s", addr_str);
         
         std::vector<uint8_t> rx_buffer;
-        rx_buffer.reserve(100 * 1024); // Pré-aloca 100KB para evitar realocações
-        char temp_buf[128];
+        rx_buffer.reserve(30 * 1024); // Pré-aloca 30KB
+        uint8_t temp_buf[128];
         int len;
 
         do {
@@ -124,10 +129,24 @@ static void tcp_server_task(void *pvParameters)
 
         if (len < 0) {
             ESP_LOGE(TAG, "Erro na recepção: errno %d", errno);
-        } else { // len == 0, conexão fechada pelo cliente
-            ESP_LOGI(TAG, "Conexão fechada. Total de bytes recebidos: %d", rx_buffer.size());
+        } else {
+            ESP_LOGI(TAG, "Conexão fechada pelo cliente. Total de bytes recebidos: %d", rx_buffer.size());
             if (!rx_buffer.empty()) {
-                run_face_detection(rx_buffer.data(), rx_buffer.size());
+                std::string results_json = run_face_detection(rx_buffer.data(), rx_buffer.size());
+                
+                ESP_LOGI(TAG, "Enviando resultados: %s", results_json.c_str());
+                int to_write = results_json.length();
+                const char* buffer_ptr = results_json.c_str();
+                while (to_write > 0) {
+                    int written = send(sock, buffer_ptr, to_write, 0);
+                    if (written < 0) {
+                        ESP_LOGE(TAG, "Erro ao enviar dados de volta: errno %d", errno);
+                        break;
+                    }
+                    to_write -= written;
+                    buffer_ptr += written;
+                }
+                ESP_LOGI(TAG, "Envio dos resultados concluído.");
             }
         }
 
