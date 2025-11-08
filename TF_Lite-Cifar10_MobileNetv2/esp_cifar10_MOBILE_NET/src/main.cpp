@@ -12,13 +12,11 @@
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 
-const char *ssid = "REDE WIFI";
-const char *password = "PASSWORD";
+const char *ssid = "";
+const char *password = "";
 const int serverPort = 80;
 
 WiFiServer server(serverPort);
-
-
 
 struct CIFAR10Model
 {
@@ -61,6 +59,8 @@ bool connect_wifi()
   Serial.println("=== Conectando ao WiFi ===");
   Serial.printf("SSID: %s\n", ssid);
 
+  WiFi.setSleep(false);
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);
   WiFi.begin(ssid, password);
 
   int attempts = 0;
@@ -84,6 +84,8 @@ bool connect_wifi()
     return false;
   }
 }
+
+
 
 void cleanup_model()
 {
@@ -112,24 +114,27 @@ void *allocate_memory(size_t size)
 
 // Função load_model()
 
-bool load_model() {
+bool load_model()
+{
 
-    Serial.println("[1] Carregando modelo...");
-    cifar10_model.model = tflite::GetModel(cifar10_mobilenetv2_finetuned_int8_tflite);
+  Serial.println("[1] Carregando modelo...");
+  cifar10_model.model = tflite::GetModel(cifar10_mobilenetv2_finetuned_int8_tflite);
 
-    if (cifar10_model.model == nullptr) {
-        Serial.println("ERRO: Falha ao carregar modelo");
-        return false;
-    }
+  if (cifar10_model.model == nullptr)
+  {
+    Serial.println("ERRO: Falha ao carregar modelo");
+    return false;
+  }
 
-    if (cifar10_model.model->version() != TFLITE_SCHEMA_VERSION) {
-        Serial.printf("ERRO: Versão incompatível: %d vs %d\n",
-                     cifar10_model.model->version(), TFLITE_SCHEMA_VERSION);
-        return false;
-    }
+  if (cifar10_model.model->version() != TFLITE_SCHEMA_VERSION)
+  {
+    Serial.printf("ERRO: Versão incompatível: %d vs %d\n",
+                  cifar10_model.model->version(), TFLITE_SCHEMA_VERSION);
+    return false;
+  }
 
-    Serial.println("Modelo carregado com sucesso");
-    return true;
+  Serial.println("Modelo carregado com sucesso");
+  return true;
 }
 
 bool initialize_interpreter()
@@ -207,65 +212,40 @@ bool initialize_cifar10_model()
   return true;
 }
 
-void preprocess_image(const uint8_t* image_data) {
-    const float input_scale = cifar10_model.input_tensor->params.scale;
-    const int32_t input_zero_point = cifar10_model.input_tensor->params.zero_point;
-
-    for (int i = 0; i < CIFAR10Model::kImageSize; ++i) {
-        // <<< MUDANÇA: Normalização para [-1, 1] como no mobilenet_v2.preprocess_input
-        float normalized_pixel = (static_cast<float>(image_data[i]) - 127.5f) / 127.5f;
-        
-        int32_t quantized_value = static_cast<int32_t>(
-            roundf(normalized_pixel / input_scale) + input_zero_point);
-        
-        quantized_value = max(SCHAR_MIN, min(SCHAR_MAX, quantized_value));
-        
-        cifar10_model.input_tensor->data.int8[i] = static_cast<int8_t>(quantized_value);
-    }
+void load_int8_input(const uint8_t *src)
+{
+  memcpy(cifar10_model.input_tensor->data.int8, src, CIFAR10Model::kImageSize);
 }
+
 
 InferenceResult run_inference(const uint8_t *image_data)
 {
   InferenceResult result = {-1, 0.0f, false, ""};
-
   if (!cifar10_model.initialized)
   {
     result.error_message = "Modelo não inicializado";
-    Serial.println("ERRO: " + result.error_message);
     return result;
   }
-
-  preprocess_image(image_data);
-
-  TfLiteStatus invoke_status = cifar10_model.interpreter->Invoke();
-  if (invoke_status != kTfLiteOk)
+  load_int8_input(image_data);
+  if (cifar10_model.interpreter->Invoke() != kTfLiteOk)
   {
-    result.error_message = "Falha na execução da inferência";
-    Serial.printf("ERRO: Invoke falhou (código: %d)\n", invoke_status);
+    result.error_message = "Falha na inferência";
     return result;
   }
-
   int best_index = 0;
   int8_t max_score = SCHAR_MIN;
-  const int output_size = cifar10_model.output_tensor->dims->data[1];
-
-  for (int i = 0; i < output_size; ++i)
-  {
+  const int n = cifar10_model.output_tensor->dims->data[1];
+  for (int i = 0; i < n; ++i)
     if (cifar10_model.output_tensor->data.int8[i] > max_score)
     {
       max_score = cifar10_model.output_tensor->data.int8[i];
       best_index = i;
     }
-  }
-
-  const float output_scale = cifar10_model.output_tensor->params.scale;
-  const int32_t output_zero_point = cifar10_model.output_tensor->params.zero_point;
-  float confidence = (static_cast<float>(max_score) - output_zero_point) * output_scale;
-
+  const float os = cifar10_model.output_tensor->params.scale;
+  const int32_t ozp = cifar10_model.output_tensor->params.zero_point;
   result.predicted_class = best_index;
-  result.confidence = confidence;
+  result.confidence = (static_cast<float>(max_score) - ozp) * os;
   result.success = true;
-
   return result;
 }
 
@@ -282,134 +262,184 @@ String create_json_response(const InferenceResult &result)
   return response;
 }
 
-void handle_client()
+
+String parse_json_array_streaming(WiFiClient &client, uint8_t *image_array, int remaining_bytes)
 {
-  WiFiClient client = server.available();
-  if (!client)
-    return;
+  // Pular até encontrar '['
+  bool found_bracket = false;
+  int bytes_read = 0;
 
-  Serial.println("=== Cliente conectado ===");
-  client.setTimeout(5000);
+  while (client.connected() && bytes_read < remaining_bytes && !found_bracket)
+  {
+    if (client.available())
+    {
+      char c = client.read();
+      bytes_read++;
+      if (c == '[')
+        found_bracket = true;
+    }
+    else
+    {
+      delay(1);
+    }
+  }
 
-  String request = "";
-  String headers = "";
-  String body = "";
-  bool reading_body = false;
-  int content_length = 0;
-  unsigned long start_time = millis();
+  if (!found_bracket)
+    return "Array '[' não encontrado";
 
-  while (client.connected() && (millis() - start_time < 10000))
+  // Ler valores diretamente
+  int pixel_count = 0;
+  String number_str = "";
+  number_str.reserve(4); // Máximo 255 = 3 dígitos
+
+  while (client.connected() && bytes_read < remaining_bytes)
   {
     if (!client.available())
     {
       delay(1);
       continue;
     }
-    String line = client.readStringUntil('\n');
-    line.trim();
 
-    if (!reading_body)
+    char c = client.read();
+    bytes_read++;
+
+    if (isdigit(c))
     {
-      if (line.length() == 0)
-      {
-        reading_body = true;
+      number_str += c;
+    }
+    else if ((c == ',' || c == ']') && number_str.length() > 0)
+    {
+      int value = number_str.toInt();
+      image_array[pixel_count++] = constrain(value, 0, 255);
+      number_str = "";
+
+      if (c == ']' || pixel_count >= CIFAR10Model::kImageSize)
         break;
+    }
+  }
+
+  if (pixel_count != CIFAR10Model::kImageSize)
+  {
+    return "Esperado 27648 pixels, recebido: " + String(pixel_count);
+  }
+
+  return ""; // Sucesso
+}
+
+
+static String read_raw(WiFiClient &c, int len, uint8_t *dst) {
+  size_t done = 0;
+  uint32_t last = millis();
+  uint8_t pct_last = 0;
+  while (done < (size_t)len) {
+    int avail = c.available();
+    if (avail > 0) {
+      int to_read = std::min(avail, len - (int)done);
+      int n = c.read(dst + done, to_read);
+      if (n > 0) {
+        done += n;
+        uint8_t pct = (uint8_t)((done * 100U) / (uint32_t)len);
+        if (pct >= pct_last + 5 || done == (size_t)len) {
+          pct_last = pct;
+          Serial.printf("RX %u%% (%u/%d)\n", pct, (unsigned)done, len);
+        }
+        last = millis();
       }
-      if (request.length() == 0)
-        request = line;
-      if (line.startsWith("Content-Length:"))
-        content_length = line.substring(15).toInt();
-    }
-  }
-
-  if (content_length > 0 && content_length < 150000) { // <<< MUDANÇA: Aumentar limite
-        body.reserve(content_length + 1);
-        unsigned long body_start = millis();
-        // <<< MUDANÇA: Aumentar timeout de leitura do body
-        while (body.length() < content_length && client.connected() && (millis() - body_start < 10000)) { 
-            if (client.available()) body += (char)client.read();
-            else delay(1);
-        }
-    }
-
-  Serial.println("Requisição: " + request);
-  Serial.println("Body length: " + String(body.length()));
-
-  String response_body = "";
-  String content_type = "text/html";
-
-    if (request.startsWith("POST /predict"))
-  {
-    content_type = "application/json";
-    InferenceResult result;
-    
-    // Aloca na heap ao invés da stack
-    uint8_t* image_data = new (std::nothrow) uint8_t[CIFAR10Model::kImageSize];
-
-    if (image_data == nullptr) {
-        result.success = false;
-        result.error_message = "Falha na alocacao de memoria para a imagem.";
-        Serial.println("ERRO: " + result.error_message);
     } else {
-        String parse_error = parse_json_array(body, image_data);
-
-        if (parse_error.length() > 0)
-        {
-          result.success = false;
-          result.error_message = parse_error;
-          result.predicted_class = -1;
-          result.confidence = 0.0f;
-          Serial.println("ERRO no parsing: " + parse_error);
-        }
-        else
-        {
-          Serial.println("=== EXECUTANDO INFERÊNCIA ===");
-          result = run_inference(image_data);
-          if (result.success)
-          {
-            Serial.println("=== RESULTADO ===");
-            Serial.printf("Predição: %d\n", result.predicted_class);
-            Serial.printf("Confiança: %.6f\n", result.confidence);
-            Serial.println("==================");
-          }
-          else
-          {
-            Serial.println("Falha na inferência: " + result.error_message);
-          }
-        }
-        // Libera a memória alocada na heap
-        delete[] image_data;
+      if (millis() - last > 5000) return "Timeout de leitura.";
+      delay(1);
     }
-    
-    response_body = create_json_response(result);
   }
-  else if (request.startsWith("GET /status"))
-  {
-    content_type = "application/json";
-    InferenceResult status_result;
-    status_result.success = cifar10_model.initialized;
-    status_result.predicted_class = -1;
-    status_result.confidence = 0.0f;
-    status_result.error_message = cifar10_model.initialized ? "" : "Modelo não inicializado";
-    response_body = create_json_response(status_result);
+  return "";
+}
+
+
+void handle_client()
+{
+  WiFiClient client = server.available();
+  if (!client) return;
+
+  client.setNoDelay(true);
+  client.setTimeout(30000);
+
+  const uint32_t t_total = millis();
+  const IPAddress rip = client.remoteIP();
+  const uint16_t rport = client.remotePort();
+  Serial.printf(">>> Conectado: %s:%u\n", rip.toString().c_str(), rport);
+
+  String req, line;
+  int content_len = 0;
+  bool expect_continue = false;
+
+  while (client.connected()) {
+    line = client.readStringUntil('\n');
+    line.trim();
+    if (line.isEmpty()) break;
+    if (req.isEmpty()) req = line;
+    if (line.startsWith("Content-Length:")) content_len = line.substring(15).toInt();
+    if (line.startsWith("Expect:") && line.indexOf("100-continue") >= 0) expect_continue = true;
   }
-  else
-  {
-    response_body = "<!DOCTYPE html><html><body><h1>CIFAR-10 API</h1><h2>Endpoints:</h2><p><b>POST /predict</b> - Body: {\"pixels\": [array de 3072 valores (32x32x3) 0-255]}</p><p><b>GET /status</b> - Status do sistema</p><p>IP: " + WiFi.localIP().toString() + "</p></body></html>";
+
+  if (expect_continue) {
+    client.print("HTTP/1.1 100 Continue\r\n\r\n");
+    client.flush();
+  }
+
+  String ctype = "text/html";
+  String body;
+  InferenceResult res{-1, 0.0f, false, ""};
+
+  if (req.startsWith("POST /predict_bin")) {
+    ctype = "application/json";
+    if (content_len != CIFAR10Model::kImageSize) {
+      res.success = false;
+      res.error_message = "Content-Length inválido";
+    } else {
+      std::unique_ptr<uint8_t[]> img(new (std::nothrow) uint8_t[CIFAR10Model::kImageSize]);
+      if (!img) {
+        res.success = false;
+        res.error_message = "Falha de memória";
+      } else {
+        const uint32_t t_rx0 = millis();
+        String err = read_raw(client, content_len, img.get());
+        const uint32_t t_rx = millis() - t_rx0;
+        if (err.length()) {
+          res.success = false;
+          res.error_message = err;
+          Serial.printf("RX falhou em %lums: %s\n", t_rx, err.c_str());
+        } else {
+          Serial.printf("RX ok em %lums\n", t_rx);
+          const uint32_t t_inf0 = millis();
+          res = run_inference(img.get());
+          Serial.printf("Inferência em %lums\n", millis() - t_inf0);
+        }
+      }
+    }
+    body = create_json_response(res);
+  } else if (req.startsWith("GET /status")) {
+    ctype = "application/json";
+    res.success = cifar10_model.initialized;
+    body = create_json_response(res);
+  } else {
+    body = "<!DOCTYPE html><html><body><h1>CIFAR-10 MobileNetV2 API</h1><p><b>POST /predict_bin</b> 27648 B raw</p><p><b>GET /status</b></p></body></html>";
   }
 
   client.println("HTTP/1.1 200 OK");
-  client.println("Content-Type: " + content_type);
+  client.println("Content-Type: " + ctype);
   client.println("Access-Control-Allow-Origin: *");
   client.println("Connection: close");
-  client.println("Content-Length: " + String(response_body.length()));
+  client.println("Content-Length: " + String(body.length()));
   client.println();
-  client.print(response_body);
+  client.print(body);
   client.flush();
-  delay(100);
   client.stop();
-  Serial.println("Cliente desconectado\n");
+
+  Serial.printf("<<< Desconectado: %s:%u | Total %lums | Heap %u\n",
+                rip.toString().c_str(), rport, millis() - t_total, esp_get_free_heap_size());
 }
+
+
+
 
 String parse_json_array(String json_data, uint8_t *image_array)
 {
