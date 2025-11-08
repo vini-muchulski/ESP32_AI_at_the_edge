@@ -1,0 +1,64 @@
+requests
+numpy
+matplotlib
+tensorflow
+
+
+xxd -i cifar10_EfficientNetB0_small_finetuned_int8.tflite > cifar10_model_data.h
+
+RESULTADOS EVALUATE
+
+(venv) apeiron@apeiron:~/Documents/PlatformIO/Projects/CIFAR_10_efficient_net/CIFAR_10_efficient_net/python_files$ python teste_evaluate.py 
+2025-11-08 08:06:42.405494: I external/local_xla/xla/tsl/cuda/cudart_stub.cc:31] Could not find cuda drivers on your machine, GPU will not be used.
+2025-11-08 08:06:42.474957: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+2025-11-08 08:06:43.940823: I external/local_xla/xla/tsl/cuda/cudart_stub.cc:31] Could not find cuda drivers on your machine, GPU will not be used.
+2025-11-08 08:06:46.418266: E external/local_xla/xla/stream_executor/cuda/cuda_platform.cc:51] failed call to cuInit: INTERNAL: CUDA error: Failed call to cuInit: UNKNOWN ERROR (303)
+[  1/ 20] idx= 1824 true=9(truck     ) pred=9(truck     ) ok=1 conf= 0.9961 lat=66098.1ms heap=2373595
+[  2/ 20] idx=  409 true=2(bird      ) pred=2(bird      ) ok=1 conf= 0.9219 lat=66045.1ms heap=2373595
+[  3/ 20] idx= 4506 true=1(automobile) pred=1(automobile) ok=1 conf= 0.9961 lat=66969.1ms heap=2373595
+[  4/ 20] idx= 4012 true=3(cat       ) pred=0(airplane  ) ok=0 conf= 0.9844 lat=66040.7ms heap=2373579
+[  5/ 20] idx= 3657 true=7(horse     ) pred=7(horse     ) ok=1 conf= 0.6406 lat=65944.5ms heap=2373819
+[  6/ 20] idx= 2286 true=3(cat       ) pred=3(cat       ) ok=1 conf= 0.9883 lat=65840.1ms heap=2373595
+[  7/ 20] idx= 1679 true=7(horse     ) pred=7(horse     ) ok=1 conf= 0.9961 lat=66146.5ms heap=2373595
+[  8/ 20] idx= 8935 true=0(airplane  ) pred=0(airplane  ) ok=1 conf= 0.9727 lat=66041.4ms heap=2373595
+[  9/ 20] idx= 1424 true=9(truck     ) pred=9(truck     ) ok=1 conf= 0.9961 lat=66146.1ms heap=2373579
+[ 10/ 20] idx= 9674 true=9(truck     ) pred=9(truck     ) ok=1 conf= 0.9961 lat=67169.9ms heap=2373587
+[ 11/ 20] idx= 6912 true=3(cat       ) pred=2(bird      ) ok=0 conf= 0.8633 lat=65737.4ms heap=2373811
+[ 12/ 20] idx=  520 true=5(dog       ) pred=5(dog       ) ok=1 conf= 0.9961 lat=66147.8ms heap=2373579
+[ 13/ 20] idx=  488 true=5(dog       ) pred=4(deer      ) ok=0 conf= 0.9609 lat=65938.8ms heap=2373579
+[ 14/ 20] idx= 1535 true=4(deer      ) pred=4(deer      ) ok=1 conf= 0.9062 lat=66146.7ms heap=2373579
+[ 15/ 20] idx= 3582 true=6(frog      ) pred=6(frog      ) ok=1 conf= 0.9961 lat=65942.6ms heap=2373587
+[ 16/ 20] idx= 3811 true=7(horse     ) pred=7(horse     ) ok=1 conf= 0.9961 lat=66042.6ms heap=2373587
+[ 17/ 20] idx= 8279 true=3(cat       ) pred=3(cat       ) ok=1 conf= 0.9375 lat=66045.0ms heap=2373587
+[ 18/ 20] idx= 9863 true=6(frog      ) pred=6(frog      ) ok=1 conf= 0.6484 lat=66350.7ms heap=2373571
+[ 19/ 20] idx=  434 true=3(cat       ) pred=3(cat       ) ok=1 conf= 0.9805 lat=65856.0ms heap=2373571
+[ 20/ 20] idx= 9195 true=6(frog      ) pred=6(frog      ) ok=1 conf= 0.8164 lat=65821.0ms heap=2373587
+
+Resumo
+Total=20 Sucesso=20 Falhas=0 Acuracia=85.00% ConfMedia=0.9295 LatMedia=66123.5ms
+
+Acuracia por classe
+0 airplane  : 100.00%
+1 automobile: 100.00%
+2 bird      : 100.00%
+3 cat       :  60.00%
+4 deer      : 100.00%
+5 dog       :  50.00%
+6 frog      : 100.00%
+7 horse     : 100.00%
+8 ship      :   0.00%
+9 truck     : 100.00%
+
+Matriz de confusao (linhas=verdade, colunas=predito)
+          0    1    2    3    4    5    6    7    8    9
+ 0    1    0    0    0    0    0    0    0    0    0
+ 1    0    1    0    0    0    0    0    0    0    0
+ 2    0    0    1    0    0    0    0    0    0    0
+ 3    1    0    1    3    0    0    0    0    0    0
+ 4    0    0    0    0    1    0    0    0    0    0
+ 5    0    0    0    0    1    1    0    0    0    0
+ 6    0    0    0    0    0    0    3    0    0    0
+ 7    0    0    0    0    0    0    0    3    0    0
+ 8    0    0    0    0    0    0    0    0    0    0
+ 9    0    0    0    0    0    0    0    0    0    3
