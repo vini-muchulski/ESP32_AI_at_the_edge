@@ -1,0 +1,21 @@
+Commands to generate an embeddable header for ESP32-S3, compatible with `src/main.cpp`:
+
+# 1) Generate a C header from the int8-quantized TFLite model
+# 2) Rename symbols to match what main.cpp expects
+# 3) Add PROGMEM to keep the model in Flash memory
+# 4) (Optional) Verify that final symbols are correct
+
+
+cd src
+
+xxd -i model_simple_int8.tflite > mnist_model_data.h
+
+
+sed -i 's/model_simple_int8_tflite/mnist_cnn_small_int8_tflite/g' mnist_model_data.h
+
+
+sed -i '1i #include <pgmspace.h>\n' mnist_model_data.h
+sed -i 's/\[\] =/[] PROGMEM =/' mnist_model_data.h
+
+
+grep -n "mnist_cnn_small_int8_tflite" mnist_model_data.h

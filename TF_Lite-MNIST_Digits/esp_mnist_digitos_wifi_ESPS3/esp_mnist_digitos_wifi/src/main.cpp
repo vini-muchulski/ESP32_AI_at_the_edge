@@ -5,7 +5,7 @@
 #include <cmath>
 #include <climits>
 
-// Verificar se os headers existem
+// Check whether headers exist
 #ifdef __has_include
   #if __has_include("mnist_model_data.h")
     #include "mnist_model_data.h"
@@ -22,26 +22,34 @@
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 
-// Configurações WiFi - ALTERE AQUI
-const char* ssid = "REDE WIFI";
-const char* password = "PASSWORD";
+// WiFi settings are injected from .env via PlatformIO extra script.
+#ifndef WIFI_SSID
+#define WIFI_SSID "WIFI NETWORK"
+#endif
+
+#ifndef WIFI_PASSWORD
+#define WIFI_PASSWORD "PASSWORD"
+#endif
+
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASSWORD;
 const int serverPort = 80;
 
-// Servidor WiFi
+// WiFi server
 WiFiServer server(serverPort);
 
-// Model data from external files (se existirem)
+// Model data from external files (if available)
 #ifdef HAS_MODEL_DATA
 extern unsigned char mnist_cnn_small_int8_tflite[];
 extern unsigned int mnist_cnn_small_int8_tflite_len;
 #endif
 
-// Dados de teste mockados se não tiver image_data.h
+// Mock test data if image_data.h is missing
 #ifndef HAS_IMAGE_DATA
-const uint8_t mnist_sample[784] PROGMEM = {0}; // Imagem vazia para teste
+const uint8_t mnist_sample[784] PROGMEM = {0}; // Blank image for testing
 #endif
 
-// Estrutura para gerenciar o modelo
+// Model management structure
 struct MNISTModel {
     tflite::ErrorReporter* error_reporter;
     const tflite::Model* model;
@@ -56,10 +64,10 @@ struct MNISTModel {
     static constexpr int kImageSize = 28 * 28;
 };
 
-// Instância global do modelo
+// Global model instance
 MNISTModel mnist_model = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, false};
 
-// Estrutura para resultado da inferência
+// Inference result structure
 struct InferenceResult {
     int predicted_digit;
     float confidence;
@@ -67,16 +75,16 @@ struct InferenceResult {
     String error_message;
 };
 
-// Declarações das funções
+// Function declarations
 void cleanup_model();
 bool connect_wifi();
 void handle_client();
 String parse_json_array(String json_data, uint8_t* image_array);
 String create_json_response(const InferenceResult& result);
 
-// Função para conectar ao WiFi
+// Connect to WiFi
 bool connect_wifi() {
-    Serial.println("=== Conectando ao WiFi ===");
+    Serial.println("=== Connecting to WiFi ===");
     Serial.printf("SSID: %s\n", ssid);
     
     WiFi.begin(ssid, password);
@@ -89,17 +97,17 @@ bool connect_wifi() {
     }
     
     if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("\nWiFi conectado!");
+        Serial.println("\nWiFi connected!");
         Serial.printf("IP: %s\n", WiFi.localIP().toString().c_str());
-        Serial.printf("Porta: %d\n", serverPort);
+        Serial.printf("Port: %d\n", serverPort);
         return true;
     } else {
-        Serial.println("\nFalha na conexão WiFi!");
+        Serial.println("\nWiFi connection failed!");
         return false;
     }
 }
 
-// Função para limpeza de memória
+// Memory cleanup
 void cleanup_model() {
     if (mnist_model.model_buffer) {
         free(mnist_model.model_buffer);
@@ -112,7 +120,7 @@ void cleanup_model() {
     mnist_model.initialized = false;
 }
 
-// Função para alocar memória preferindo PSRAM
+// Allocate memory, preferring PSRAM
 void* allocate_memory(size_t size) {
     void* ptr = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (ptr == nullptr) {
@@ -121,57 +129,57 @@ void* allocate_memory(size_t size) {
     return ptr;
 }
 
-// Função para carregar o modelo
+// Load model
 bool load_model() {
 #ifndef HAS_MODEL_DATA
-    Serial.println("ERRO: mnist_model_data.h não encontrado!");
+    Serial.println("ERROR: mnist_model_data.h not found!");
     return false;
 #endif
 
-    Serial.println("[1] Carregando modelo...");
+    Serial.println("[1] Loading model...");
     
-    // Tentar carregar modelo no PSRAM
+    // Try loading the model into PSRAM
     mnist_model.model_buffer = static_cast<uint8_t*>(
         allocate_memory(mnist_cnn_small_int8_tflite_len));
     
     if (mnist_model.model_buffer != nullptr) {
-        Serial.printf("Copiando modelo (%d bytes) para memória...\n", mnist_cnn_small_int8_tflite_len);
+        Serial.printf("Copying model (%d bytes) into memory...\n", mnist_cnn_small_int8_tflite_len);
         memcpy(mnist_model.model_buffer, mnist_cnn_small_int8_tflite, mnist_cnn_small_int8_tflite_len);
         mnist_model.model = tflite::GetModel(mnist_model.model_buffer);
     } else {
-        Serial.println("Usando modelo diretamente da Flash...");
+        Serial.println("Using model directly from Flash...");
         mnist_model.model = tflite::GetModel(mnist_cnn_small_int8_tflite);
     }
     
     if (mnist_model.model == nullptr) {
-        Serial.println("ERRO: Falha ao carregar modelo");
+        Serial.println("ERROR: Failed to load model");
         return false;
     }
     
     if (mnist_model.model->version() != TFLITE_SCHEMA_VERSION) {
-        Serial.printf("ERRO: Versão incompatível: %d vs %d\n",
+        Serial.printf("ERROR: Incompatible version: %d vs %d\n",
                      mnist_model.model->version(), TFLITE_SCHEMA_VERSION);
         return false;
     }
     
-    Serial.println("Modelo carregado com sucesso");
+    Serial.println("Model loaded successfully");
     return true;
 }
 
-// Função para inicializar o interpretador
+// Initialize interpreter
 bool initialize_interpreter() {
-    Serial.println("[2] Inicializando interpretador...");
+    Serial.println("[2] Initializing interpreter...");
     
-    // Alocar tensor arena
+    // Allocate tensor arena
     mnist_model.tensor_arena = static_cast<uint8_t*>(
         allocate_memory(MNISTModel::kTensorArenaSize));
     
     if (mnist_model.tensor_arena == nullptr) {
-        Serial.printf("ERRO: Falha na alocação de %d bytes\n", MNISTModel::kTensorArenaSize);
+        Serial.printf("ERROR: Allocation of %d bytes failed\n", MNISTModel::kTensorArenaSize);
         return false;
     }
     
-    // Configurar op resolver
+    // Configure op resolver
     static tflite::MicroMutableOpResolver<10> op_resolver;
     op_resolver.AddConv2D();
     op_resolver.AddMaxPool2D();
@@ -184,38 +192,38 @@ bool initialize_interpreter() {
     op_resolver.AddMul();
     op_resolver.AddAdd();
     
-    // Criar interpretador
+    // Create interpreter
     static tflite::MicroInterpreter static_interpreter(
         mnist_model.model, op_resolver, mnist_model.tensor_arena, MNISTModel::kTensorArenaSize);
     mnist_model.interpreter = &static_interpreter;
     
-    // Alocar tensores
+    // Allocate tensors
     TfLiteStatus allocate_status = mnist_model.interpreter->AllocateTensors();
     if (allocate_status != kTfLiteOk) {
-        Serial.printf("ERRO: AllocateTensors falhou (código: %d)\n", allocate_status);
+        Serial.printf("ERROR: AllocateTensors failed (code: %d)\n", allocate_status);
         return false;
     }
     
-    // Obter ponteiros dos tensores
+    // Get tensor pointers
     mnist_model.input_tensor = mnist_model.interpreter->input(0);
     mnist_model.output_tensor = mnist_model.interpreter->output(0);
     
     if (mnist_model.input_tensor == nullptr || mnist_model.output_tensor == nullptr) {
-        Serial.println("ERRO: Ponteiros de tensor nulos");
+        Serial.println("ERROR: Null tensor pointers");
         return false;
     }
     
-    Serial.printf("Arena usada: %d/%d bytes\n", 
+    Serial.printf("Arena used: %d/%d bytes\n", 
                   mnist_model.interpreter->arena_used_bytes(), MNISTModel::kTensorArenaSize);
-    Serial.println("Interpretador inicializado com sucesso");
+    Serial.println("Interpreter initialized successfully");
     return true;
 }
 
-// Função para inicializar o modelo completo
+// Initialize full model pipeline
 bool initialize_mnist_model() {
-    Serial.println("=== Inicializando Modelo MNIST ===");
+    Serial.println("=== Initializing MNIST Model ===");
     
-    // Inicializar error reporter
+    // Initialize error reporter
     static tflite::MicroErrorReporter micro_error_reporter;
     mnist_model.error_reporter = &micro_error_reporter;
     
@@ -229,11 +237,11 @@ bool initialize_mnist_model() {
     }
     
     mnist_model.initialized = true;
-    Serial.println("=== Modelo inicializado com sucesso ===\n");
+    Serial.println("=== Model initialized successfully ===\n");
     return true;
 }
 
-// Função para preprocessar a imagem
+// Preprocess image
 void preprocess_image(const uint8_t* image_data) {
     const float input_scale = mnist_model.input_tensor->params.scale;
     const int32_t input_zero_point = mnist_model.input_tensor->params.zero_point;
@@ -248,28 +256,28 @@ void preprocess_image(const uint8_t* image_data) {
     }
 }
 
-// Função para fazer inferência
+// Run inference
 InferenceResult run_inference(const uint8_t* image_data) {
     InferenceResult result = {-1, 0.0f, false, ""};
     
     if (!mnist_model.initialized) {
-        result.error_message = "Modelo não inicializado";
-        Serial.println("ERRO: Modelo não inicializado");
+        result.error_message = "Model not initialized";
+        Serial.println("ERROR: Model not initialized");
         return result;
     }
     
-    // Preprocessar imagem
+    // Preprocess image
     preprocess_image(image_data);
     
-    // Executar inferência
+    // Run inference
     TfLiteStatus invoke_status = mnist_model.interpreter->Invoke();
     if (invoke_status != kTfLiteOk) {
-        result.error_message = "Falha na execução da inferência";
-        Serial.printf("ERRO: Invoke falhou (código: %d)\n", invoke_status);
+        result.error_message = "Inference execution failed";
+        Serial.printf("ERROR: Invoke failed (code: %d)\n", invoke_status);
         return result;
     }
     
-    // Analisar resultado
+    // Analyze result
     int best_index = 0;
     int8_t max_score = SCHAR_MIN;
     const int output_size = mnist_model.output_tensor->dims->data[1];
@@ -281,7 +289,7 @@ InferenceResult run_inference(const uint8_t* image_data) {
         }
     }
     
-    // Converter score para float
+    // Convert score to float
     const float output_scale = mnist_model.output_tensor->params.scale;
     const int32_t output_zero_point = mnist_model.output_tensor->params.zero_point;
     float confidence = (static_cast<float>(max_score) - output_zero_point) * output_scale;
@@ -294,7 +302,7 @@ InferenceResult run_inference(const uint8_t* image_data) {
 }
 
 
-// Função para criar resposta JSON
+// Build JSON response
 String create_json_response(const InferenceResult& result) {
     String response = "{\n";
     response += "  \"success\": " + String(result.success ? "true" : "false") + ",\n";
@@ -307,15 +315,14 @@ String create_json_response(const InferenceResult& result) {
     return response;
 }
 
-// Função para lidar com clientes HTTP
-// Função para lidar com clientes HTTP - VERSÃO CORRIGIDA
+// Handle HTTP clients - corrected version
 void handle_client() {
     WiFiClient client = server.available();
     if (!client) return;
     
-    Serial.println("=== Cliente conectado ===");
+    Serial.println("=== Client connected ===");
     
-    // Configurar timeout do cliente
+    // Configure client timeout
     client.setTimeout(5000);
     
     String request = "";
@@ -324,9 +331,9 @@ void handle_client() {
     bool reading_body = false;
     int content_length = 0;
     
-    // Ler requisição HTTP com timeout
+    // Read HTTP request with timeout
     unsigned long start_time = millis();
-    const unsigned long timeout_ms = 10000; // 10 segundos
+    const unsigned long timeout_ms = 10000; // 10 seconds
     
     while (client.connected() && (millis() - start_time < timeout_ms)) {
         if (!client.available()) {
@@ -340,7 +347,7 @@ void handle_client() {
         if (!reading_body) {
             if (line.length() == 0) {
                 reading_body = true;
-                break; // Parar de ler headers
+                break; // Stop reading headers
             }
             
             if (request.length() == 0) {
@@ -355,8 +362,8 @@ void handle_client() {
         }
     }
     
-    // Ler body se POST e tiver Content-Length
-    if (content_length > 0 && content_length < 50000) { // Limite de segurança
+    // Read body if POST has Content-Length
+    if (content_length > 0 && content_length < 50000) { // Safety limit
         body.reserve(content_length + 100);
         
         unsigned long body_start = millis();
@@ -371,17 +378,17 @@ void handle_client() {
         }
     }
     
-    Serial.println("Requisição: " + request);
+    Serial.println("Request: " + request);
     Serial.println("Body length: " + String(body.length()));
     
     String response_body = "";
     String content_type = "text/html";
     
-    // Processar requisição
+    // Process request
     if (request.startsWith("POST /predict")) {
         content_type = "application/json";
         
-        // Processar inferência
+        // Process inference
         uint8_t image_data[784];
         String parse_error = parse_json_array(body, image_data);
         
@@ -391,18 +398,18 @@ void handle_client() {
             result.error_message = parse_error;
             result.predicted_digit = -1;
             result.confidence = 0.0f;
-            Serial.println("ERRO no parsing: " + parse_error);
+            Serial.println("Parsing error: " + parse_error);
         } else {
-            Serial.println("=== EXECUTANDO INFERÊNCIA ===");
+            Serial.println("=== RUNNING INFERENCE ===");
             result = run_inference(image_data);
             
             if (result.success) {
-                Serial.println("=== RESULTADO ===");
-                Serial.printf("Predição: %d\n", result.predicted_digit);
-                Serial.printf("Confiança: %.6f\n", result.confidence);
+                Serial.println("=== RESULT ===");
+                Serial.printf("Prediction: %d\n", result.predicted_digit);
+                Serial.printf("Confidence: %.6f\n", result.confidence);
                 Serial.println("==================");
             } else {
-                Serial.println("Falha na inferência: " + result.error_message);
+                Serial.println("Inference failed: " + result.error_message);
             }
         }
         
@@ -411,28 +418,28 @@ void handle_client() {
     } else if (request.startsWith("GET /status")) {
         content_type = "application/json";
         
-        // Status do sistema
+        // System status
         InferenceResult status_result;
         status_result.success = mnist_model.initialized;
         status_result.predicted_digit = -1;
         status_result.confidence = 0.0f;
-        status_result.error_message = mnist_model.initialized ? "" : "Modelo não inicializado";
+        status_result.error_message = mnist_model.initialized ? "" : "Model not initialized";
         
         response_body = create_json_response(status_result);
         
     } else {
-        // Página de ajuda
+        // Help page
         response_body = "<!DOCTYPE html><html><body>";
         response_body += "<h1>MNIST API</h1>";
         response_body += "<h2>Endpoints:</h2>";
-        response_body += "<p><b>POST /predict</b> - Fazer inferência</p>";
-        response_body += "<p>Body JSON: {\"pixels\": [array de 784 valores 0-255]}</p>";
-        response_body += "<p><b>GET /status</b> - Status do sistema</p>";
+        response_body += "<p><b>POST /predict</b> - Run inference</p>";
+        response_body += "<p>Body JSON: {\"pixels\": [array of 784 values 0-255]}</p>";
+        response_body += "<p><b>GET /status</b> - System status</p>";
         response_body += "<p>IP: " + WiFi.localIP().toString() + "</p>";
         response_body += "</body></html>";
     }
     
-    // Enviar resposta HTTP com headers apropriados
+    // Send HTTP response with proper headers
     client.println("HTTP/1.1 200 OK");
     client.println("Content-Type: " + content_type);
     client.println("Access-Control-Allow-Origin: *");
@@ -440,44 +447,44 @@ void handle_client() {
     client.println("Access-Control-Allow-Headers: Content-Type");
     client.println("Connection: close");
     client.println("Content-Length: " + String(response_body.length()));
-    client.println(); // Linha vazia importante
+    client.println(); // Important blank line
     client.print(response_body);
-    client.flush(); // Garantir que todos os dados foram enviados
+    client.flush(); // Ensure all data is sent
     
-    // Pequena pausa antes de fechar
+    // Short pause before closing
     delay(100);
     
     client.stop();
-    Serial.println("Cliente desconectado\n");
+    Serial.println("Client disconnected\n");
 }
 
-// Função para parsear array JSON - VERSÃO MAIS ROBUSTA
+// Parse JSON array - more robust version
 String parse_json_array(String json_data, uint8_t* image_array) {
-    // Procurar pelo array "pixels"
+    // Find the "pixels" array
     int start_index = json_data.indexOf("\"pixels\":");
     if (start_index == -1) {
-        return "Campo 'pixels' não encontrado";
+        return "Field 'pixels' not found";
     }
     
     start_index = json_data.indexOf('[', start_index);
     if (start_index == -1) {
-        return "Array de pixels não encontrado";
+        return "Pixels array not found";
     }
     
     int end_index = json_data.indexOf(']', start_index);
     if (end_index == -1) {
-        return "Fim do array não encontrado";
+        return "Array end not found";
     }
     
     String array_content = json_data.substring(start_index + 1, end_index);
     array_content.trim();
     
-    // Parsear valores com melhor tratamento de erros
+    // Parse values with improved error handling
     int pixel_count = 0;
     int current_pos = 0;
     
     while (current_pos < array_content.length() && pixel_count < 784) {
-        // Pular espaços em branco
+        // Skip whitespace
         while (current_pos < array_content.length() && 
                (array_content.charAt(current_pos) == ' ' || 
                 array_content.charAt(current_pos) == '\t' ||
@@ -488,7 +495,7 @@ String parse_json_array(String json_data, uint8_t* image_array) {
         
         if (current_pos >= array_content.length()) break;
         
-        // Encontrar próxima vírgula ou fim
+        // Find next comma or end
         int comma_pos = array_content.indexOf(',', current_pos);
         String value_str;
         
@@ -500,7 +507,7 @@ String parse_json_array(String json_data, uint8_t* image_array) {
         
         value_str.trim();
         
-        // Verificar se é número válido
+        // Validate numeric token
         bool is_valid_number = true;
         for (int i = 0; i < value_str.length(); i++) {
             char c = value_str.charAt(i);
@@ -511,12 +518,12 @@ String parse_json_array(String json_data, uint8_t* image_array) {
         }
         
         if (!is_valid_number || value_str.length() == 0) {
-            return "Valor inválido no índice " + String(pixel_count) + ": '" + value_str + "'";
+            return "Invalid value at index " + String(pixel_count) + ": '" + value_str + "'";
         }
         
         int pixel_value = value_str.toInt();
         
-        // Validar range do pixel (0-255)
+        // Clamp pixel range (0-255)
         if (pixel_value < 0) pixel_value = 0;
         if (pixel_value > 255) pixel_value = 255;
         
@@ -528,10 +535,10 @@ String parse_json_array(String json_data, uint8_t* image_array) {
     }
     
     if (pixel_count != 784) {
-        return "Array deve ter exatamente 784 pixels (28x28), recebido: " + String(pixel_count);
+        return "Array must contain exactly 784 pixels (28x28), received: " + String(pixel_count);
     }
     
-    return ""; // Sucesso
+    return ""; // Success
 }
 
 
@@ -540,43 +547,43 @@ void setup() {
     delay(2000);
     
     Serial.println("\n=== MNIST TensorFlow Lite WiFi API ===");
-    Serial.printf("Free heap inicial: %d bytes\n", esp_get_free_heap_size());
-    Serial.printf("PSRAM disponível: %d bytes\n", ESP.getPsramSize());
+    Serial.printf("Initial free heap: %d bytes\n", esp_get_free_heap_size());
+    Serial.printf("Available PSRAM: %d bytes\n", ESP.getPsramSize());
     
-    // Conectar WiFi
+    // Connect WiFi
     if (!connect_wifi()) {
-        Serial.println("Falha na conexão WiFi - reiniciando...");
+        Serial.println("WiFi connection failed - restarting...");
         ESP.restart();
     }
     
-    // Inicializar modelo
+    // Initialize model
     if (!initialize_mnist_model()) {
-        Serial.println("Falha na inicialização do modelo!");
+        Serial.println("Model initialization failed!");
         return;
     }
     
-    // Iniciar servidor
+    // Start server
     server.begin();
-    Serial.println("\n=== Servidor HTTP iniciado ===");
-    Serial.println("Endpoints disponíveis:");
-    Serial.println("POST /predict - Fazer inferência");
-    Serial.println("GET /status - Status do sistema");
-    Serial.println("GET / - Página de ajuda");
+    Serial.println("\n=== HTTP server started ===");
+    Serial.println("Available endpoints:");
+    Serial.println("POST /predict - Run inference");
+    Serial.println("GET /status - System status");
+    Serial.println("GET / - Help page");
     Serial.println("============================\n");
 }
 
 void loop() {
-    // Verificar conexão WiFi
+    // Check WiFi connection
     if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("WiFi desconectado - tentando reconectar...");
+        Serial.println("WiFi disconnected - trying to reconnect...");
         if (!connect_wifi()) {
             delay(5000);
             return;
         }
     }
     
-    // Lidar com clientes
+    // Handle clients
     handle_client();
     
-    delay(10); // Pequeno delay para não sobrecarregar
+    delay(10); // Short delay to avoid overload
 }
