@@ -1,17 +1,21 @@
 import json
+import os
+import warnings
 from pathlib import Path
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 import numpy as np
 import requests
 import tensorflow as tf
 
-ESP32_IP = "192.168.0.111"
+ESP32_IP = "192.168.3.22"
 ESP32_PORT = 80
-IMAGE_INDEX = 5
+IMAGE_INDEX = 56
 REQUEST_TIMEOUT = 15.0
 SAVE_PLOT_PATH = Path(__file__).resolve().parent / "inference_result.png"
-SHOW_PLOT = False
-
+SHOW_PLOT = True
 
 def get_mnist_image(index: int) -> tuple[np.ndarray, int]:
     (_, _), (x_test, y_test) = tf.keras.datasets.mnist.load_data()
@@ -58,6 +62,26 @@ def maybe_save_plot(
 ) -> None:
     if not output_path and not show_plot:
         return
+
+    # Silence non-critical Matplotlib warning when Axes3D is unavailable.
+    warnings.filterwarnings(
+        "ignore",
+        message="Unable to import Axes3D.*",
+        category=UserWarning,
+    )
+
+    import matplotlib
+
+    if show_plot:
+        # Avoid Qt backends (xcb plugin issues in many Linux setups).
+        try:
+            matplotlib.use("TkAgg", force=True)
+        except Exception:
+            matplotlib.use("Agg", force=True)
+            show_plot = False
+            print("Interactive backend unavailable, falling back to image-only mode.")
+    else:
+        matplotlib.use("Agg", force=True)
 
     import matplotlib.pyplot as plt
 
