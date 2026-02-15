@@ -8,3 +8,4 @@
 /ESP-DL-face-detect/examples/human_face_detect/main/venv
 common_components/esp-nn/
 *.pyc
+TF_Lite-MNIST_Digits/esp_mnist_digitos_wifi_ESPS3/esp_mnist_digitos_wifi/src/eval_results.csv

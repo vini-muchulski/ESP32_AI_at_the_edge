@@ -24,11 +24,11 @@
 
 // WiFi settings are injected from .env via PlatformIO extra script.
 #ifndef WIFI_SSID
-#define WIFI_SSID "WIFI_NETWORK"
+#define WIFI_SSID "WIFI_SSID"
 #endif
 
 #ifndef WIFI_PASSWORD
-#define WIFI_PASSWORD "PASSWORD"
+#define WIFI_PASSWORD "WIFI_PASSWORD"
 #endif
 
 const char* ssid = WIFI_SSID;
@@ -60,7 +60,7 @@ struct MNISTModel {
     uint8_t* model_buffer;
     bool initialized;
     
-    static constexpr int kTensorArenaSize = 80 * 1024;
+    static constexpr int kTensorArenaSize = 120 * 1024;
     static constexpr int kImageSize = 28 * 28;
 };
 
@@ -69,7 +69,7 @@ MNISTModel mnist_model = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 
 
 // Inference result structure
 struct InferenceResult {
-    int predicted_digit;
+    int predicted_class;
     float confidence;
     bool success;
     String error_message;
@@ -79,8 +79,8 @@ struct InferenceResult {
 void cleanup_model();
 bool connect_wifi();
 void handle_client();
-String parse_json_array(String json_data, uint8_t* image_array);
-String parse_json_array_int8(String json_data, int8_t* image_array);
+String parse_json_array(String json_data, int16_t* image_array);
+void write_input_tensor(const int16_t* image_data);
 String create_json_response(const InferenceResult& result);
 
 // Connect to WiFi
@@ -242,29 +242,25 @@ bool initialize_mnist_model() {
     return true;
 }
 
-// Preprocess image
-void preprocess_image(const uint8_t* image_data) {
-    const float input_scale = mnist_model.input_tensor->params.scale;
-    const int32_t input_zero_point = mnist_model.input_tensor->params.zero_point;
-    
-    for (int i = 0; i < MNISTModel::kImageSize; ++i) {
-        uint8_t pixel = image_data[i];
-        float normalized_pixel = pixel / 255.0f;
-        int32_t quantized_value = static_cast<int32_t>(
-            roundf(normalized_pixel / input_scale) + input_zero_point);
-
-        if (mnist_model.input_tensor->type == kTfLiteUInt8) {
-            quantized_value = max(0, min(255, quantized_value));
-            mnist_model.input_tensor->data.uint8[i] = static_cast<uint8_t>(quantized_value);
-        } else {
-            quantized_value = max(-128, min(127, quantized_value));
-            mnist_model.input_tensor->data.int8[i] = static_cast<int8_t>(quantized_value);
+void write_input_tensor(const int16_t* image_data) {
+    if (mnist_model.input_tensor->type == kTfLiteUInt8) {
+        for (int i = 0; i < MNISTModel::kImageSize; ++i) {
+            int32_t value = image_data[i];
+            value = max(0, min(255, value));
+            mnist_model.input_tensor->data.uint8[i] = static_cast<uint8_t>(value);
         }
+        return;
+    }
+
+    for (int i = 0; i < MNISTModel::kImageSize; ++i) {
+        int32_t value = image_data[i];
+        value = max(-128, min(127, value));
+        mnist_model.input_tensor->data.int8[i] = static_cast<int8_t>(value);
     }
 }
 
 // Run inference
-InferenceResult run_inference(const uint8_t* image_data, const int8_t* q_image_data = nullptr) {
+InferenceResult run_inference(const int16_t* image_data) {
     InferenceResult result = {-1, 0.0f, false, ""};
     
     if (!mnist_model.initialized) {
@@ -273,16 +269,8 @@ InferenceResult run_inference(const uint8_t* image_data, const int8_t* q_image_d
         return result;
     }
     
-    if (q_image_data != nullptr) {
-        if (mnist_model.input_tensor->type != kTfLiteInt8) {
-            result.error_message = "q_pixels is only supported for int8 input tensors";
-            Serial.println("ERROR: q_pixels used with non-int8 input tensor");
-            return result;
-        }
-        memcpy(mnist_model.input_tensor->data.int8, q_image_data, MNISTModel::kImageSize);
-    } else {
-        preprocess_image(image_data);
-    }
+    // Input is already quantized on the client side.
+    write_input_tensor(image_data);
     
     // Run inference
     TfLiteStatus invoke_status = mnist_model.interpreter->Invoke();
@@ -294,23 +282,32 @@ InferenceResult run_inference(const uint8_t* image_data, const int8_t* q_image_d
     
     // Analyze result
     int best_index = 0;
-    int8_t max_score = SCHAR_MIN;
+    float max_score = -INFINITY;
     const int output_size = mnist_model.output_tensor->dims->data[1];
-    
+
+    const float output_scale = mnist_model.output_tensor->params.scale;
+    const int32_t output_zero_point = mnist_model.output_tensor->params.zero_point;
+
     for (int i = 0; i < output_size; ++i) {
-        if (mnist_model.output_tensor->data.int8[i] > max_score) {
-            max_score = mnist_model.output_tensor->data.int8[i];
+        float dequantized_score = 0.0f;
+        if (mnist_model.output_tensor->type == kTfLiteInt8) {
+            dequantized_score =
+                (static_cast<float>(mnist_model.output_tensor->data.int8[i]) - output_zero_point) * output_scale;
+        } else if (mnist_model.output_tensor->type == kTfLiteUInt8) {
+            dequantized_score =
+                (static_cast<float>(mnist_model.output_tensor->data.uint8[i]) - output_zero_point) * output_scale;
+        } else {
+            dequantized_score = mnist_model.output_tensor->data.f[i];
+        }
+
+        if (dequantized_score > max_score) {
+            max_score = dequantized_score;
             best_index = i;
         }
     }
-    
-    // Convert score to float
-    const float output_scale = mnist_model.output_tensor->params.scale;
-    const int32_t output_zero_point = mnist_model.output_tensor->params.zero_point;
-    float confidence = (static_cast<float>(max_score) - output_zero_point) * output_scale;
-    
-    result.predicted_digit = best_index;
-    result.confidence = confidence;
+
+    result.predicted_class = best_index;
+    result.confidence = max_score;
     result.success = true;
     
     return result;
@@ -321,7 +318,8 @@ InferenceResult run_inference(const uint8_t* image_data, const int8_t* q_image_d
 String create_json_response(const InferenceResult& result) {
     String response = "{\n";
     response += "  \"success\": " + String(result.success ? "true" : "false") + ",\n";
-    response += "  \"predicted_digit\": " + String(result.predicted_digit) + ",\n";
+    response += "  \"predicted_class\": " + String(result.predicted_class) + ",\n";
+    response += "  \"predicted_digit\": " + String(result.predicted_class) + ",\n";
     response += "  \"confidence\": " + String(result.confidence, 6) + ",\n";
     response += "  \"error_message\": \"" + result.error_message + "\",\n";
     response += "  \"heap_free\": " + String(esp_get_free_heap_size()) + ",\n";
@@ -404,29 +402,23 @@ void handle_client() {
         content_type = "application/json";
         
         // Process inference
-        uint8_t image_data[784];
-        int8_t q_image_data[784];
-        const bool use_quantized_input = body.indexOf("\"q_pixels\":") != -1;
-        String parse_error = use_quantized_input
-            ? parse_json_array_int8(body, q_image_data)
-            : parse_json_array(body, image_data);
+        int16_t image_data[MNISTModel::kImageSize];
+        String parse_error = parse_json_array(body, image_data);
         
         InferenceResult result;
         if (parse_error.length() > 0) {
             result.success = false;
             result.error_message = parse_error;
-            result.predicted_digit = -1;
+            result.predicted_class = -1;
             result.confidence = 0.0f;
             Serial.println("Parsing error: " + parse_error);
         } else {
             Serial.println("=== RUNNING INFERENCE ===");
-            result = use_quantized_input
-                ? run_inference(nullptr, q_image_data)
-                : run_inference(image_data);
+            result = run_inference(image_data);
             
             if (result.success) {
                 Serial.println("=== RESULT ===");
-                Serial.printf("Prediction: %d\n", result.predicted_digit);
+                Serial.printf("Prediction class: %d\n", result.predicted_class);
                 Serial.printf("Confidence: %.6f\n", result.confidence);
                 Serial.println("==================");
             } else {
@@ -442,7 +434,7 @@ void handle_client() {
         // System status
         InferenceResult status_result;
         status_result.success = mnist_model.initialized;
-        status_result.predicted_digit = -1;
+        status_result.predicted_class = -1;
         status_result.confidence = 0.0f;
         status_result.error_message = mnist_model.initialized ? "" : "Model not initialized";
         
@@ -451,11 +443,10 @@ void handle_client() {
     } else {
         // Help page
         response_body = "<!DOCTYPE html><html><body>";
-        response_body += "<h1>MNIST API</h1>";
+        response_body += "<h1>Fashion-MNIST API</h1>";
         response_body += "<h2>Endpoints:</h2>";
         response_body += "<p><b>POST /predict</b> - Run inference</p>";
-        response_body += "<p>Body JSON: {\"pixels\": [array of 784 values 0-255]}</p>";
-        response_body += "<p>or: {\"q_pixels\": [array of 784 values -128 to 127]}</p>";
+        response_body += "<p>Body JSON: {\"q_pixels\": [array of 784 quantized values]}</p>";
         response_body += "<p><b>GET /status</b> - System status</p>";
         response_body += "<p>IP: " + WiFi.localIP().toString() + "</p>";
         response_body += "</body></html>";
@@ -481,11 +472,11 @@ void handle_client() {
 }
 
 // Parse JSON array - more robust version
-String parse_json_array(String json_data, uint8_t* image_array) {
-    // Find the "pixels" array
-    int start_index = json_data.indexOf("\"pixels\":");
+String parse_json_array(String json_data, int16_t* image_array) {
+    // Find the "q_pixels" array
+    int start_index = json_data.indexOf("\"q_pixels\":");
     if (start_index == -1) {
-        return "Field 'pixels' not found";
+        return "Field 'q_pixels' not found";
     }
     
     start_index = json_data.indexOf('[', start_index);
@@ -505,7 +496,7 @@ String parse_json_array(String json_data, uint8_t* image_array) {
     int pixel_count = 0;
     int current_pos = 0;
     
-    while (current_pos < array_content.length() && pixel_count < 784) {
+    while (current_pos < array_content.length() && pixel_count < MNISTModel::kImageSize) {
         // Skip whitespace
         while (current_pos < array_content.length() && 
                (array_content.charAt(current_pos) == ' ' || 
@@ -544,93 +535,19 @@ String parse_json_array(String json_data, uint8_t* image_array) {
         }
         
         int pixel_value = value_str.toInt();
-        
-        // Clamp pixel range (0-255)
-        if (pixel_value < 0) pixel_value = 0;
-        if (pixel_value > 255) pixel_value = 255;
-        
-        image_array[pixel_count] = (uint8_t)pixel_value;
+        image_array[pixel_count] = static_cast<int16_t>(pixel_value);
         pixel_count++;
         
         if (comma_pos == -1) break;
         current_pos = comma_pos + 1;
     }
     
-    if (pixel_count != 784) {
-        return "Array must contain exactly 784 pixels (28x28), received: " + String(pixel_count);
+    if (pixel_count != MNISTModel::kImageSize) {
+        return "Array must contain exactly " + String(MNISTModel::kImageSize) +
+               " pixels (28x28), received: " + String(pixel_count);
     }
     
     return ""; // Success
-}
-
-String parse_json_array_int8(String json_data, int8_t* image_array) {
-    int start_index = json_data.indexOf("\"q_pixels\":");
-    if (start_index == -1) {
-        return "Field 'q_pixels' not found";
-    }
-
-    start_index = json_data.indexOf('[', start_index);
-    if (start_index == -1) {
-        return "q_pixels array not found";
-    }
-
-    int end_index = json_data.indexOf(']', start_index);
-    if (end_index == -1) {
-        return "Array end not found";
-    }
-
-    String array_content = json_data.substring(start_index + 1, end_index);
-    array_content.trim();
-
-    int pixel_count = 0;
-    int current_pos = 0;
-
-    while (current_pos < array_content.length() && pixel_count < 784) {
-        while (current_pos < array_content.length() &&
-               (array_content.charAt(current_pos) == ' ' ||
-                array_content.charAt(current_pos) == '\t' ||
-                array_content.charAt(current_pos) == '\n' ||
-                array_content.charAt(current_pos) == '\r')) {
-            current_pos++;
-        }
-
-        if (current_pos >= array_content.length()) break;
-
-        int comma_pos = array_content.indexOf(',', current_pos);
-        String value_str = (comma_pos == -1)
-            ? array_content.substring(current_pos)
-            : array_content.substring(current_pos, comma_pos);
-        value_str.trim();
-
-        bool is_valid_number = true;
-        for (int i = 0; i < value_str.length(); i++) {
-            char c = value_str.charAt(i);
-            if (!isdigit(c) && c != '-' && c != '+') {
-                is_valid_number = false;
-                break;
-            }
-        }
-
-        if (!is_valid_number || value_str.length() == 0) {
-            return "Invalid value at index " + String(pixel_count) + ": '" + value_str + "'";
-        }
-
-        int pixel_value = value_str.toInt();
-        if (pixel_value < -128) pixel_value = -128;
-        if (pixel_value > 127) pixel_value = 127;
-
-        image_array[pixel_count] = static_cast<int8_t>(pixel_value);
-        pixel_count++;
-
-        if (comma_pos == -1) break;
-        current_pos = comma_pos + 1;
-    }
-
-    if (pixel_count != 784) {
-        return "Array must contain exactly 784 pixels (28x28), received: " + String(pixel_count);
-    }
-
-    return "";
 }
 
 
@@ -638,7 +555,7 @@ void setup() {
     Serial.begin(115200);
     delay(2000);
     
-    Serial.println("\n=== MNIST TensorFlow Lite WiFi API ===");
+    Serial.println("\n=== Fashion-MNIST TensorFlow Lite WiFi API ===");
     Serial.printf("Initial free heap: %d bytes\n", esp_get_free_heap_size());
     Serial.printf("Available PSRAM: %d bytes\n", ESP.getPsramSize());
     
