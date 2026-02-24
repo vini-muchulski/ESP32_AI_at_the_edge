@@ -1,4 +1,0 @@
-requests
-numpy
-matplotlib
-tensorflow
