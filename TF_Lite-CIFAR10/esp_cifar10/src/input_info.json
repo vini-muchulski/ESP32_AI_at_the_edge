@@ -1,0 +1,10 @@
+{
+  "model": "model_simple_int8.tflite",
+  "size": [
+    32,
+    32
+  ],
+  "scale": 0.003921568859368563,
+  "zero_point": 0,
+  "dtype": "uint8"
+}

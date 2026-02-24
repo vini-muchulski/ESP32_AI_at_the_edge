@@ -20,18 +20,18 @@ INPUT_INFO_PATH = Path(__file__).resolve().parent / "input_info.json"
 SHOW_PLOT = True
 
 
-IMAGE_INDEX = 55
+IMAGE_INDEX = 10
 CLASS_NAMES = [
-    "T-shirt/top",
-    "Trouser",
-    "Pullover",
-    "Dress",
-    "Coat",
-    "Sandal",
-    "Shirt",
-    "Sneaker",
-    "Bag",
-    "Ankle boot",
+    "airplane",
+    "automobile",
+    "bird",
+    "cat",
+    "deer",
+    "dog",
+    "frog",
+    "horse",
+    "ship",
+    "truck",
 ]
 
 
@@ -47,13 +47,29 @@ def get_prediction_info(prediction_data: dict) -> tuple[int | str, str]:
     return predicted_class, predicted_name
 
 
-def get_fashion_image(index: int) -> tuple[np.ndarray, int]:
-    (_, _), (x_test, y_test) = tf.keras.datasets.fashion_mnist.load_data()
+def get_cifar10_image(index: int) -> tuple[np.ndarray, int]:
+    (_, _), (x_test, y_test) = tf.keras.datasets.cifar10.load_data()
     if index < 0 or index >= len(x_test):
         raise IndexError(
             f"Index {index} is out of range for test dataset (0-{len(x_test) - 1})."
         )
-    return x_test[index], int(y_test[index])
+    return x_test[index], int(y_test[index][0])
+
+
+def validate_input_shape(image_data: np.ndarray, input_info: dict) -> None:
+    expected_h, expected_w = [int(v) for v in input_info["size"]]
+    if image_data.ndim == 2:
+        image_h, image_w = image_data.shape
+    elif image_data.ndim == 3:
+        image_h, image_w = image_data.shape[:2]
+    else:
+        raise ValueError(f"Unsupported image ndim: {image_data.ndim}")
+
+    if (image_h, image_w) != (expected_h, expected_w):
+        raise ValueError(
+            f"Image shape ({image_h}, {image_w}) is incompatible with model input "
+            f"({expected_h}, {expected_w})."
+        )
 
 
 def load_input_info(path: Path) -> dict:
@@ -63,6 +79,8 @@ def load_input_info(path: Path) -> dict:
 
 
 def quantize_image(image_data: np.ndarray, input_info: dict) -> np.ndarray:
+    validate_input_shape(image_data, input_info)
+
     scale = float(input_info["scale"])
     zero_point = int(input_info["zero_point"])
     dtype = str(input_info["dtype"])
@@ -146,7 +164,7 @@ def maybe_save_plot(
     predicted_class, pred_label_name = get_prediction_info(prediction_data)
     true_label_name = class_name_from_index(true_label)
 
-    plt.imshow(image, cmap="gray")
+    plt.imshow(image)
     plt.title(
         f"Sent to ESP32\nTrue: {true_label_name} ({true_label}) | Pred: {pred_label_name} ({predicted_class})"
     )
@@ -164,7 +182,7 @@ def maybe_save_plot(
 
 def main() -> None:
     api_url = f"http://{ESP32_IP}:{ESP32_PORT}/predict"
-    image, true_label = get_fashion_image(IMAGE_INDEX)
+    image, true_label = get_cifar10_image(IMAGE_INDEX)
     result = send_image_for_inference(api_url, image, REQUEST_TIMEOUT)
     print_results(IMAGE_INDEX, true_label, result)
 

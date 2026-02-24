@@ -46,7 +46,7 @@ extern unsigned int mnist_cnn_small_int8_tflite_len;
 
 // Mock test data if image_data.h is missing
 #ifndef HAS_IMAGE_DATA
-const uint8_t mnist_sample[784] PROGMEM = {0}; // Blank image for testing
+const uint8_t mnist_sample[32 * 32 * 3] PROGMEM = {0}; // Blank image for testing
 #endif
 
 // Model management structure
@@ -61,7 +61,10 @@ struct MNISTModel {
     bool initialized;
     
     static constexpr int kTensorArenaSize = 120 * 1024;
-    static constexpr int kImageSize = 28 * 28;
+    static constexpr int kInputHeight = 32;
+    static constexpr int kInputWidth = 32;
+    static constexpr int kInputChannels = 3;
+    static constexpr int kImageSize = kInputHeight * kInputWidth * kInputChannels;
 };
 
 // Global model instance
@@ -79,9 +82,13 @@ struct InferenceResult {
 void cleanup_model();
 bool connect_wifi();
 void handle_client();
-String parse_json_array(String json_data, int16_t* image_array);
+String parse_json_array(const String& json_data, int16_t* image_array);
+bool validate_input_tensor_shape();
 void write_input_tensor(const int16_t* image_data);
 String create_json_response(const InferenceResult& result);
+
+// Keep input buffer out of loopTask stack (32*32*3 int16_t = 6144 bytes).
+static int16_t g_input_image[MNISTModel::kImageSize];
 
 // Connect to WiFi
 bool connect_wifi() {
@@ -167,6 +174,42 @@ bool load_model() {
     return true;
 }
 
+bool validate_input_tensor_shape() {
+    if (mnist_model.input_tensor == nullptr || mnist_model.input_tensor->dims == nullptr) {
+        Serial.println("ERROR: Invalid input tensor metadata");
+        return false;
+    }
+
+    TfLiteIntArray* dims = mnist_model.input_tensor->dims;
+    const bool shape_ok = dims->size == 4 &&
+                          dims->data[0] == 1 &&
+                          dims->data[1] == MNISTModel::kInputHeight &&
+                          dims->data[2] == MNISTModel::kInputWidth &&
+                          dims->data[3] == MNISTModel::kInputChannels;
+    if (!shape_ok) {
+        Serial.printf(
+            "ERROR: Unexpected input shape. Expected [1,%d,%d,%d], got [",
+            MNISTModel::kInputHeight, MNISTModel::kInputWidth, MNISTModel::kInputChannels
+        );
+        for (int i = 0; i < dims->size; ++i) {
+            if (i > 0) {
+                Serial.print(",");
+            }
+            Serial.print(dims->data[i]);
+        }
+        Serial.println("]");
+        return false;
+    }
+
+    if (mnist_model.input_tensor->type != kTfLiteUInt8 &&
+        mnist_model.input_tensor->type != kTfLiteInt8) {
+        Serial.printf("ERROR: Unsupported input tensor type: %d\n", mnist_model.input_tensor->type);
+        return false;
+    }
+
+    return true;
+}
+
 // Initialize interpreter
 bool initialize_interpreter() {
     Serial.println("[2] Initializing interpreter...");
@@ -211,6 +254,10 @@ bool initialize_interpreter() {
     
     if (mnist_model.input_tensor == nullptr || mnist_model.output_tensor == nullptr) {
         Serial.println("ERROR: Null tensor pointers");
+        return false;
+    }
+
+    if (!validate_input_tensor_shape()) {
         return false;
     }
     
@@ -402,8 +449,7 @@ void handle_client() {
         content_type = "application/json";
         
         // Process inference
-        int16_t image_data[MNISTModel::kImageSize];
-        String parse_error = parse_json_array(body, image_data);
+        String parse_error = parse_json_array(body, g_input_image);
         
         InferenceResult result;
         if (parse_error.length() > 0) {
@@ -414,7 +460,7 @@ void handle_client() {
             Serial.println("Parsing error: " + parse_error);
         } else {
             Serial.println("=== RUNNING INFERENCE ===");
-            result = run_inference(image_data);
+            result = run_inference(g_input_image);
             
             if (result.success) {
                 Serial.println("=== RESULT ===");
@@ -443,10 +489,10 @@ void handle_client() {
     } else {
         // Help page
         response_body = "<!DOCTYPE html><html><body>";
-        response_body += "<h1>Fashion-MNIST API</h1>";
+        response_body += "<h1>CIFAR-10 API</h1>";
         response_body += "<h2>Endpoints:</h2>";
         response_body += "<p><b>POST /predict</b> - Run inference</p>";
-        response_body += "<p>Body JSON: {\"q_pixels\": [array of 784 quantized values]}</p>";
+        response_body += "<p>Body JSON: {\"q_pixels\": [array of 3072 quantized values]}</p>";
         response_body += "<p><b>GET /status</b> - System status</p>";
         response_body += "<p>IP: " + WiFi.localIP().toString() + "</p>";
         response_body += "</body></html>";
@@ -472,7 +518,7 @@ void handle_client() {
 }
 
 // Parse JSON array - more robust version
-String parse_json_array(String json_data, int16_t* image_array) {
+String parse_json_array(const String& json_data, int16_t* image_array) {
     // Find the "q_pixels" array
     int start_index = json_data.indexOf("\"q_pixels\":");
     if (start_index == -1) {
@@ -544,7 +590,7 @@ String parse_json_array(String json_data, int16_t* image_array) {
     
     if (pixel_count != MNISTModel::kImageSize) {
         return "Array must contain exactly " + String(MNISTModel::kImageSize) +
-               " pixels (28x28), received: " + String(pixel_count);
+               " pixels (32x32x3), received: " + String(pixel_count);
     }
     
     return ""; // Success
@@ -555,7 +601,7 @@ void setup() {
     Serial.begin(115200);
     delay(2000);
     
-    Serial.println("\n=== Fashion-MNIST TensorFlow Lite WiFi API ===");
+    Serial.println("\n=== CIFAR-10 TensorFlow Lite WiFi API ===");
     Serial.printf("Initial free heap: %d bytes\n", esp_get_free_heap_size());
     Serial.printf("Available PSRAM: %d bytes\n", ESP.getPsramSize());
     

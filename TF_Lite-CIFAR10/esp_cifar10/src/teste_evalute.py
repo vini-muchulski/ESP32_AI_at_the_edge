@@ -21,7 +21,7 @@ STATUS_URL = f"http://{ESP32_IP}:{ESP32_PORT}/status"
 INPUT_INFO_PATH = BASE_DIR / "input_info.json"
 REQUEST_TIMEOUT = float(os.environ.get("REQUEST_TIMEOUT", "20"))
 
-N_SAMPLES = int(os.environ.get("N_SAMPLES", "50"))
+N_SAMPLES = 100
 START_INDEX = int(os.environ.get("START_INDEX", "0"))
 SHUFFLE = os.environ.get("SHUFFLE", "1") == "1"
 SEED = int(os.environ.get("SEED", "42"))
@@ -31,16 +31,16 @@ CSV_PATH = BASE_DIR / "eval_results.csv"
 PLOT_CM = os.environ.get("PLOT_CM", "1") == "1"
 
 CLASS_NAMES = [
-    "T-shirt/top",
-    "Trouser",
-    "Pullover",
-    "Dress",
-    "Coat",
-    "Sandal",
-    "Shirt",
-    "Sneaker",
-    "Bag",
-    "Ankle boot",
+    "airplane",
+    "automobile",
+    "bird",
+    "cat",
+    "deer",
+    "dog",
+    "frog",
+    "horse",
+    "ship",
+    "truck",
 ]
 
 
@@ -50,7 +50,25 @@ def load_input_info(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def validate_input_shape(image_data: np.ndarray, input_info: dict) -> None:
+    expected_h, expected_w = [int(v) for v in input_info["size"]]
+    if image_data.ndim == 2:
+        image_h, image_w = image_data.shape
+    elif image_data.ndim == 3:
+        image_h, image_w = image_data.shape[:2]
+    else:
+        raise ValueError(f"Unsupported image ndim: {image_data.ndim}")
+
+    if (image_h, image_w) != (expected_h, expected_w):
+        raise ValueError(
+            f"Image shape ({image_h}, {image_w}) is incompatible with model input "
+            f"({expected_h}, {expected_w})."
+        )
+
+
 def quantize_image(image_data: np.ndarray, input_info: dict) -> np.ndarray:
+    validate_input_shape(image_data, input_info)
+
     scale = float(input_info["scale"])
     zero_point = int(input_info["zero_point"])
     dtype = str(input_info["dtype"])
@@ -69,9 +87,9 @@ def quantize_image(image_data: np.ndarray, input_info: dict) -> np.ndarray:
     raise ValueError(f"Unsupported input dtype in input_info.json: {dtype}")
 
 
-def get_fashion_test_set() -> Tuple[np.ndarray, np.ndarray]:
-    (_, _), (x_test, y_test) = tf.keras.datasets.fashion_mnist.load_data()
-    return x_test, y_test
+def get_cifar10_test_set() -> Tuple[np.ndarray, np.ndarray]:
+    (_, _), (x_test, y_test) = tf.keras.datasets.cifar10.load_data()
+    return x_test, y_test.flatten()
 
 
 def pick_indices(total: int, n: int, start: int, shuffle: bool, seed: int) -> np.ndarray:
@@ -162,7 +180,7 @@ def plot_confusion_matrix(cm: np.ndarray, labels: List[str]) -> None:
 
 def main() -> None:
     input_info = load_input_info(INPUT_INFO_PATH)
-    x_test, y_test = get_fashion_test_set()
+    x_test, y_test = get_cifar10_test_set()
     idxs = pick_indices(len(x_test), N_SAMPLES, START_INDEX, SHUFFLE, SEED)
 
     cm = np.zeros((len(CLASS_NAMES), len(CLASS_NAMES)), dtype=int)

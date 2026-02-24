@@ -1,4 +1,4 @@
-Commands to generate an embeddable header for ESP32-S3 (Fashion-MNIST int8), compatible with `src/main.cpp`:
+Commands to generate an embeddable header for ESP32-S3 (CIFAR10 MODEL int8), compatible with `src/main.cpp`:
 
 # 1) Generate a C header from the int8-quantized TFLite model
 # 2) Rename symbols to match what main.cpp expects
