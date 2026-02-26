@@ -7,8 +7,8 @@
 
 // Check whether headers exist
 #ifdef __has_include
-  #if __has_include("mnist_model_data.h")
-    #include "mnist_model_data.h"
+  #if __has_include("model_simple_int8.h")
+    #include "model_simple_int8.h"
     #define HAS_MODEL_DATA
   #endif
   #if __has_include("image_data.h")
@@ -40,17 +40,12 @@ WiFiServer server(serverPort);
 
 // Model data from external files (if available)
 #ifdef HAS_MODEL_DATA
-extern unsigned char mnist_cnn_small_int8_tflite[];
-extern unsigned int mnist_cnn_small_int8_tflite_len;
-#endif
-
-// Mock test data if image_data.h is missing
-#ifndef HAS_IMAGE_DATA
-const uint8_t mnist_sample[784] PROGMEM = {0}; // Blank image for testing
+extern const unsigned char model_simple_int8_tflite[];
+extern const unsigned int model_simple_int8_tflite_len;
 #endif
 
 // Model management structure
-struct MNISTModel {
+struct InferenceModel {
     tflite::ErrorReporter* error_reporter;
     const tflite::Model* model;
     tflite::MicroInterpreter* interpreter;
@@ -60,12 +55,19 @@ struct MNISTModel {
     uint8_t* model_buffer;
     bool initialized;
     
-    static constexpr int kTensorArenaSize = 120 * 1024;
-    static constexpr int kImageSize = 28 * 28;
+    // MobileNetV2 224x224x3 INT8 needs a larger arena on ESP32-S3.
+    static constexpr int kTensorArenaSize = 3 * 1024 * 1024;
+    // Keep model in Flash by default to preserve PSRAM for tensors.
+    static constexpr bool kCopyModelToPSRAM = false;
+    static constexpr int kInputWidth = 224;
+    static constexpr int kInputHeight = 224;
+    static constexpr int kInputChannels = 3;
+    static constexpr int kImageSize = kInputWidth * kInputHeight * kInputChannels;
+    static constexpr int kMaxRequestBytes = 1200 * 1024;
 };
 
 // Global model instance
-MNISTModel mnist_model = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, false};
+InferenceModel model_ctx = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, false};
 
 // Inference result structure
 struct InferenceResult {
@@ -75,13 +77,22 @@ struct InferenceResult {
     String error_message;
 };
 
+struct RequestTimings {
+    uint32_t receive_ms;
+    uint32_t parse_ms;
+    uint32_t inference_ms;
+    uint32_t total_ms;
+    int content_length;
+    int body_length;
+};
+
 // Function declarations
 void cleanup_model();
 bool connect_wifi();
 void handle_client();
-String parse_json_array(String json_data, int16_t* image_array);
+String parse_json_array(const String& json_data, int16_t* image_array);
 void write_input_tensor(const int16_t* image_data);
-String create_json_response(const InferenceResult& result);
+String create_json_response(const InferenceResult& result, const RequestTimings* timings = nullptr);
 
 // Connect to WiFi
 bool connect_wifi() {
@@ -110,15 +121,15 @@ bool connect_wifi() {
 
 // Memory cleanup
 void cleanup_model() {
-    if (mnist_model.model_buffer) {
-        free(mnist_model.model_buffer);
-        mnist_model.model_buffer = nullptr;
+    if (model_ctx.model_buffer) {
+        free(model_ctx.model_buffer);
+        model_ctx.model_buffer = nullptr;
     }
-    if (mnist_model.tensor_arena) {
-        free(mnist_model.tensor_arena);
-        mnist_model.tensor_arena = nullptr;
+    if (model_ctx.tensor_arena) {
+        free(model_ctx.tensor_arena);
+        model_ctx.tensor_arena = nullptr;
     }
-    mnist_model.initialized = false;
+    model_ctx.initialized = false;
 }
 
 // Allocate memory, preferring PSRAM
@@ -133,33 +144,37 @@ void* allocate_memory(size_t size) {
 // Load model
 bool load_model() {
 #ifndef HAS_MODEL_DATA
-    Serial.println("ERROR: mnist_model_data.h not found!");
+    Serial.println("ERROR: model header not found (expected model_simple_int8.h)");
     return false;
 #endif
 
     Serial.println("[1] Loading model...");
     
-    // Try loading the model into PSRAM
-    mnist_model.model_buffer = static_cast<uint8_t*>(
-        allocate_memory(mnist_cnn_small_int8_tflite_len));
-    
-    if (mnist_model.model_buffer != nullptr) {
-        Serial.printf("Copying model (%d bytes) into memory...\n", mnist_cnn_small_int8_tflite_len);
-        memcpy(mnist_model.model_buffer, mnist_cnn_small_int8_tflite, mnist_cnn_small_int8_tflite_len);
-        mnist_model.model = tflite::GetModel(mnist_model.model_buffer);
+    if (InferenceModel::kCopyModelToPSRAM) {
+        model_ctx.model_buffer = static_cast<uint8_t*>(
+            allocate_memory(model_simple_int8_tflite_len));
+
+        if (model_ctx.model_buffer != nullptr) {
+            Serial.printf("Copying model (%d bytes) into memory...\n", model_simple_int8_tflite_len);
+            memcpy(model_ctx.model_buffer, model_simple_int8_tflite, model_simple_int8_tflite_len);
+            model_ctx.model = tflite::GetModel(model_ctx.model_buffer);
+        } else {
+            Serial.println("Model copy to PSRAM failed, using Flash...");
+            model_ctx.model = tflite::GetModel(model_simple_int8_tflite);
+        }
     } else {
         Serial.println("Using model directly from Flash...");
-        mnist_model.model = tflite::GetModel(mnist_cnn_small_int8_tflite);
+        model_ctx.model = tflite::GetModel(model_simple_int8_tflite);
     }
     
-    if (mnist_model.model == nullptr) {
+    if (model_ctx.model == nullptr) {
         Serial.println("ERROR: Failed to load model");
         return false;
     }
     
-    if (mnist_model.model->version() != TFLITE_SCHEMA_VERSION) {
+    if (model_ctx.model->version() != TFLITE_SCHEMA_VERSION) {
         Serial.printf("ERROR: Incompatible version: %d vs %d\n",
-                     mnist_model.model->version(), TFLITE_SCHEMA_VERSION);
+                     model_ctx.model->version(), TFLITE_SCHEMA_VERSION);
         return false;
     }
     
@@ -172,17 +187,18 @@ bool initialize_interpreter() {
     Serial.println("[2] Initializing interpreter...");
     
     // Allocate tensor arena
-    mnist_model.tensor_arena = static_cast<uint8_t*>(
-        allocate_memory(MNISTModel::kTensorArenaSize));
+    model_ctx.tensor_arena = static_cast<uint8_t*>(
+        allocate_memory(InferenceModel::kTensorArenaSize));
     
-    if (mnist_model.tensor_arena == nullptr) {
-        Serial.printf("ERROR: Allocation of %d bytes failed\n", MNISTModel::kTensorArenaSize);
+    if (model_ctx.tensor_arena == nullptr) {
+        Serial.printf("ERROR: Allocation of %d bytes failed\n", InferenceModel::kTensorArenaSize);
         return false;
     }
     
     // Configure op resolver
-    static tflite::MicroMutableOpResolver<10> op_resolver;
+    static tflite::MicroMutableOpResolver<12> op_resolver;
     op_resolver.AddConv2D();
+    op_resolver.AddDepthwiseConv2D();
     op_resolver.AddMaxPool2D();
     op_resolver.AddReshape();
     op_resolver.AddFullyConnected();
@@ -195,38 +211,38 @@ bool initialize_interpreter() {
     
     // Create interpreter
     static tflite::MicroInterpreter static_interpreter(
-        mnist_model.model, op_resolver, mnist_model.tensor_arena, MNISTModel::kTensorArenaSize);
-    mnist_model.interpreter = &static_interpreter;
+        model_ctx.model, op_resolver, model_ctx.tensor_arena, InferenceModel::kTensorArenaSize);
+    model_ctx.interpreter = &static_interpreter;
     
     // Allocate tensors
-    TfLiteStatus allocate_status = mnist_model.interpreter->AllocateTensors();
+    TfLiteStatus allocate_status = model_ctx.interpreter->AllocateTensors();
     if (allocate_status != kTfLiteOk) {
         Serial.printf("ERROR: AllocateTensors failed (code: %d)\n", allocate_status);
         return false;
     }
     
     // Get tensor pointers
-    mnist_model.input_tensor = mnist_model.interpreter->input(0);
-    mnist_model.output_tensor = mnist_model.interpreter->output(0);
+    model_ctx.input_tensor = model_ctx.interpreter->input(0);
+    model_ctx.output_tensor = model_ctx.interpreter->output(0);
     
-    if (mnist_model.input_tensor == nullptr || mnist_model.output_tensor == nullptr) {
+    if (model_ctx.input_tensor == nullptr || model_ctx.output_tensor == nullptr) {
         Serial.println("ERROR: Null tensor pointers");
         return false;
     }
     
     Serial.printf("Arena used: %d/%d bytes\n", 
-                  mnist_model.interpreter->arena_used_bytes(), MNISTModel::kTensorArenaSize);
+                  model_ctx.interpreter->arena_used_bytes(), InferenceModel::kTensorArenaSize);
     Serial.println("Interpreter initialized successfully");
     return true;
 }
 
 // Initialize full model pipeline
-bool initialize_mnist_model() {
-    Serial.println("=== Initializing MNIST Model ===");
+bool initialize_model() {
+    Serial.println("=== Initializing Model ===");
     
     // Initialize error reporter
     static tflite::MicroErrorReporter micro_error_reporter;
-    mnist_model.error_reporter = &micro_error_reporter;
+    model_ctx.error_reporter = &micro_error_reporter;
     
     if (!load_model()) {
         return false;
@@ -237,25 +253,25 @@ bool initialize_mnist_model() {
         return false;
     }
     
-    mnist_model.initialized = true;
+    model_ctx.initialized = true;
     Serial.println("=== Model initialized successfully ===\n");
     return true;
 }
 
 void write_input_tensor(const int16_t* image_data) {
-    if (mnist_model.input_tensor->type == kTfLiteUInt8) {
-        for (int i = 0; i < MNISTModel::kImageSize; ++i) {
+    if (model_ctx.input_tensor->type == kTfLiteUInt8) {
+        for (int i = 0; i < InferenceModel::kImageSize; ++i) {
             int32_t value = image_data[i];
             value = max(0, min(255, value));
-            mnist_model.input_tensor->data.uint8[i] = static_cast<uint8_t>(value);
+            model_ctx.input_tensor->data.uint8[i] = static_cast<uint8_t>(value);
         }
         return;
     }
 
-    for (int i = 0; i < MNISTModel::kImageSize; ++i) {
+    for (int i = 0; i < InferenceModel::kImageSize; ++i) {
         int32_t value = image_data[i];
         value = max(-128, min(127, value));
-        mnist_model.input_tensor->data.int8[i] = static_cast<int8_t>(value);
+        model_ctx.input_tensor->data.int8[i] = static_cast<int8_t>(value);
     }
 }
 
@@ -263,7 +279,7 @@ void write_input_tensor(const int16_t* image_data) {
 InferenceResult run_inference(const int16_t* image_data) {
     InferenceResult result = {-1, 0.0f, false, ""};
     
-    if (!mnist_model.initialized) {
+    if (!model_ctx.initialized) {
         result.error_message = "Model not initialized";
         Serial.println("ERROR: Model not initialized");
         return result;
@@ -273,7 +289,7 @@ InferenceResult run_inference(const int16_t* image_data) {
     write_input_tensor(image_data);
     
     // Run inference
-    TfLiteStatus invoke_status = mnist_model.interpreter->Invoke();
+    TfLiteStatus invoke_status = model_ctx.interpreter->Invoke();
     if (invoke_status != kTfLiteOk) {
         result.error_message = "Inference execution failed";
         Serial.printf("ERROR: Invoke failed (code: %d)\n", invoke_status);
@@ -283,21 +299,21 @@ InferenceResult run_inference(const int16_t* image_data) {
     // Analyze result
     int best_index = 0;
     float max_score = -INFINITY;
-    const int output_size = mnist_model.output_tensor->dims->data[1];
+    const int output_size = model_ctx.output_tensor->dims->data[1];
 
-    const float output_scale = mnist_model.output_tensor->params.scale;
-    const int32_t output_zero_point = mnist_model.output_tensor->params.zero_point;
+    const float output_scale = model_ctx.output_tensor->params.scale;
+    const int32_t output_zero_point = model_ctx.output_tensor->params.zero_point;
 
     for (int i = 0; i < output_size; ++i) {
         float dequantized_score = 0.0f;
-        if (mnist_model.output_tensor->type == kTfLiteInt8) {
+        if (model_ctx.output_tensor->type == kTfLiteInt8) {
             dequantized_score =
-                (static_cast<float>(mnist_model.output_tensor->data.int8[i]) - output_zero_point) * output_scale;
-        } else if (mnist_model.output_tensor->type == kTfLiteUInt8) {
+                (static_cast<float>(model_ctx.output_tensor->data.int8[i]) - output_zero_point) * output_scale;
+        } else if (model_ctx.output_tensor->type == kTfLiteUInt8) {
             dequantized_score =
-                (static_cast<float>(mnist_model.output_tensor->data.uint8[i]) - output_zero_point) * output_scale;
+                (static_cast<float>(model_ctx.output_tensor->data.uint8[i]) - output_zero_point) * output_scale;
         } else {
-            dequantized_score = mnist_model.output_tensor->data.f[i];
+            dequantized_score = model_ctx.output_tensor->data.f[i];
         }
 
         if (dequantized_score > max_score) {
@@ -315,15 +331,24 @@ InferenceResult run_inference(const int16_t* image_data) {
 
 
 // Build JSON response
-String create_json_response(const InferenceResult& result) {
+String create_json_response(const InferenceResult& result, const RequestTimings* timings) {
     String response = "{\n";
     response += "  \"success\": " + String(result.success ? "true" : "false") + ",\n";
     response += "  \"predicted_class\": " + String(result.predicted_class) + ",\n";
-    response += "  \"predicted_digit\": " + String(result.predicted_class) + ",\n";
     response += "  \"confidence\": " + String(result.confidence, 6) + ",\n";
     response += "  \"error_message\": \"" + result.error_message + "\",\n";
     response += "  \"heap_free\": " + String(esp_get_free_heap_size()) + ",\n";
-    response += "  \"model_initialized\": " + String(mnist_model.initialized ? "true" : "false") + "\n";
+    response += "  \"model_initialized\": " + String(model_ctx.initialized ? "true" : "false");
+    if (timings != nullptr) {
+        response += ",\n  \"receive_ms\": " + String(timings->receive_ms);
+        response += ",\n  \"parse_ms\": " + String(timings->parse_ms);
+        response += ",\n  \"inference_ms\": " + String(timings->inference_ms);
+        response += ",\n  \"total_ms\": " + String(timings->total_ms);
+        response += ",\n  \"content_length\": " + String(timings->content_length);
+        response += ",\n  \"body_length\": " + String(timings->body_length) + "\n";
+    } else {
+        response += "\n";
+    }
     response += "}";
     return response;
 }
@@ -336,13 +361,16 @@ void handle_client() {
     Serial.println("=== Client connected ===");
     
     // Configure client timeout
-    client.setTimeout(5000);
+    client.setTimeout(15000);
     
     String request = "";
     String headers = "";
     String body = "";
     bool reading_body = false;
     int content_length = 0;
+    bool body_complete = true;
+    RequestTimings timings = {0, 0, 0, 0, 0, 0};
+    const uint32_t request_start_ms = millis();
     
     // Read HTTP request with timeout
     unsigned long start_time = millis();
@@ -375,23 +403,42 @@ void handle_client() {
         }
     }
     
-    // Read body if POST has Content-Length
-    if (content_length > 0 && content_length < 50000) { // Safety limit
+    // Read body if POST has valid Content-Length
+    const uint32_t body_read_start_ms = millis();
+    if (request.startsWith("POST /predict") &&
+        content_length > 0 &&
+        content_length < InferenceModel::kMaxRequestBytes) {
         body.reserve(content_length + 100);
         
-        unsigned long body_start = millis();
-        while (body.length() < content_length && client.connected() && 
-               (millis() - body_start < 5000)) {
-            if (client.available()) {
-                char c = client.read();
-                body += c;
+        unsigned long last_progress_ms = millis();
+        const unsigned long body_timeout_ms = 30000; // timeout without read progress
+
+        while (body.length() < content_length && client.connected()) {
+            int available_bytes = client.available();
+            if (available_bytes > 0) {
+                int remaining = content_length - body.length();
+                int to_read = min(available_bytes, remaining);
+                while (to_read-- > 0) {
+                    body += static_cast<char>(client.read());
+                }
+                last_progress_ms = millis();
+            } else if ((millis() - last_progress_ms) > body_timeout_ms) {
+                body_complete = false;
+                break;
             } else {
                 delay(1);
             }
         }
+        if (body.length() != content_length) {
+            body_complete = false;
+        }
     }
+    timings.receive_ms = millis() - body_read_start_ms;
+    timings.content_length = content_length;
+    timings.body_length = body.length();
     
     Serial.println("Request: " + request);
+    Serial.println("Content-Length: " + String(content_length));
     Serial.println("Body length: " + String(body.length()));
     
     String response_body = "";
@@ -400,10 +447,58 @@ void handle_client() {
     // Process request
     if (request.startsWith("POST /predict")) {
         content_type = "application/json";
+
+        if (content_length <= 0) {
+            InferenceResult bad_request;
+            bad_request.success = false;
+            bad_request.error_message = "Missing or invalid Content-Length";
+            bad_request.predicted_class = -1;
+            bad_request.confidence = 0.0f;
+            timings.total_ms = millis() - request_start_ms;
+            response_body = create_json_response(bad_request, &timings);
+            goto send_response;
+        }
+
+        if (content_length >= InferenceModel::kMaxRequestBytes) {
+            InferenceResult too_large;
+            too_large.success = false;
+            too_large.error_message = "Payload too large";
+            too_large.predicted_class = -1;
+            too_large.confidence = 0.0f;
+            timings.total_ms = millis() - request_start_ms;
+            response_body = create_json_response(too_large, &timings);
+            goto send_response;
+        }
+
+        if (!body_complete) {
+            InferenceResult incomplete;
+            incomplete.success = false;
+            incomplete.error_message =
+                "Incomplete request body: expected " + String(content_length) +
+                ", received " + String(body.length());
+            incomplete.predicted_class = -1;
+            incomplete.confidence = 0.0f;
+            timings.total_ms = millis() - request_start_ms;
+            response_body = create_json_response(incomplete, &timings);
+            goto send_response;
+        }
         
         // Process inference
-        int16_t image_data[MNISTModel::kImageSize];
+        int16_t* image_data = static_cast<int16_t*>(allocate_memory(sizeof(int16_t) * InferenceModel::kImageSize));
+        if (image_data == nullptr) {
+            InferenceResult oom_result;
+            oom_result.success = false;
+            oom_result.error_message = "Failed to allocate image buffer";
+            oom_result.predicted_class = -1;
+            oom_result.confidence = 0.0f;
+            timings.total_ms = millis() - request_start_ms;
+            response_body = create_json_response(oom_result, &timings);
+            goto send_response;
+        }
+
+        const uint32_t parse_start_ms = millis();
         String parse_error = parse_json_array(body, image_data);
+        timings.parse_ms = millis() - parse_start_ms;
         
         InferenceResult result;
         if (parse_error.length() > 0) {
@@ -414,7 +509,9 @@ void handle_client() {
             Serial.println("Parsing error: " + parse_error);
         } else {
             Serial.println("=== RUNNING INFERENCE ===");
+            const uint32_t inference_start_ms = millis();
             result = run_inference(image_data);
+            timings.inference_ms = millis() - inference_start_ms;
             
             if (result.success) {
                 Serial.println("=== RESULT ===");
@@ -425,33 +522,42 @@ void handle_client() {
                 Serial.println("Inference failed: " + result.error_message);
             }
         }
-        
-        response_body = create_json_response(result);
+        free(image_data);
+        timings.total_ms = millis() - request_start_ms;
+        Serial.printf(
+            "Timing(ms): receive=%lu parse=%lu inference=%lu total=%lu\n",
+            static_cast<unsigned long>(timings.receive_ms),
+            static_cast<unsigned long>(timings.parse_ms),
+            static_cast<unsigned long>(timings.inference_ms),
+            static_cast<unsigned long>(timings.total_ms)
+        );
+        response_body = create_json_response(result, &timings);
         
     } else if (request.startsWith("GET /status")) {
         content_type = "application/json";
         
         // System status
         InferenceResult status_result;
-        status_result.success = mnist_model.initialized;
+        status_result.success = model_ctx.initialized;
         status_result.predicted_class = -1;
         status_result.confidence = 0.0f;
-        status_result.error_message = mnist_model.initialized ? "" : "Model not initialized";
+        status_result.error_message = model_ctx.initialized ? "" : "Model not initialized";
         
         response_body = create_json_response(status_result);
         
     } else {
         // Help page
         response_body = "<!DOCTYPE html><html><body>";
-        response_body += "<h1>Fashion-MNIST API</h1>";
+        response_body += "<h1>CIFAR-10 MobileNetV2 API</h1>";
         response_body += "<h2>Endpoints:</h2>";
         response_body += "<p><b>POST /predict</b> - Run inference</p>";
-        response_body += "<p>Body JSON: {\"q_pixels\": [array of 784 quantized values]}</p>";
+        response_body += "<p>Body JSON: {\"q_pixels\": [array of 150528 quantized values]}</p>";
         response_body += "<p><b>GET /status</b> - System status</p>";
         response_body += "<p>IP: " + WiFi.localIP().toString() + "</p>";
         response_body += "</body></html>";
     }
-    
+
+send_response:
     // Send HTTP response with proper headers
     client.println("HTTP/1.1 200 OK");
     client.println("Content-Type: " + content_type);
@@ -472,7 +578,7 @@ void handle_client() {
 }
 
 // Parse JSON array - more robust version
-String parse_json_array(String json_data, int16_t* image_array) {
+String parse_json_array(const String& json_data, int16_t* image_array) {
     // Find the "q_pixels" array
     int start_index = json_data.indexOf("\"q_pixels\":");
     if (start_index == -1) {
@@ -489,62 +595,73 @@ String parse_json_array(String json_data, int16_t* image_array) {
         return "Array end not found";
     }
     
-    String array_content = json_data.substring(start_index + 1, end_index);
-    array_content.trim();
-    
-    // Parse values with improved error handling
+    // Parse numeric values in one pass to keep parsing linear for large payloads.
     int pixel_count = 0;
-    int current_pos = 0;
-    
-    while (current_pos < array_content.length() && pixel_count < MNISTModel::kImageSize) {
-        // Skip whitespace
-        while (current_pos < array_content.length() && 
-               (array_content.charAt(current_pos) == ' ' || 
-                array_content.charAt(current_pos) == '\t' ||
-                array_content.charAt(current_pos) == '\n' ||
-                array_content.charAt(current_pos) == '\r')) {
-            current_pos++;
-        }
-        
-        if (current_pos >= array_content.length()) break;
-        
-        // Find next comma or end
-        int comma_pos = array_content.indexOf(',', current_pos);
-        String value_str;
-        
-        if (comma_pos == -1) {
-            value_str = array_content.substring(current_pos);
-        } else {
-            value_str = array_content.substring(current_pos, comma_pos);
-        }
-        
-        value_str.trim();
-        
-        // Validate numeric token
-        bool is_valid_number = true;
-        for (int i = 0; i < value_str.length(); i++) {
-            char c = value_str.charAt(i);
-            if (!isdigit(c) && c != '-' && c != '+') {
-                is_valid_number = false;
-                break;
+    bool in_number = false;
+    int sign = 1;
+    long value = 0;
+
+    for (int i = start_index + 1; i < end_index; ++i) {
+        char c = json_data.charAt(i);
+
+        if (c >= '0' && c <= '9') {
+            if (!in_number) {
+                in_number = true;
+                sign = 1;
+                value = 0;
             }
+            value = value * 10 + (c - '0');
+            continue;
         }
-        
-        if (!is_valid_number || value_str.length() == 0) {
-            return "Invalid value at index " + String(pixel_count) + ": '" + value_str + "'";
+
+        if (c == '-' && !in_number) {
+            in_number = true;
+            sign = -1;
+            value = 0;
+            continue;
         }
-        
-        int pixel_value = value_str.toInt();
-        image_array[pixel_count] = static_cast<int16_t>(pixel_value);
-        pixel_count++;
-        
-        if (comma_pos == -1) break;
-        current_pos = comma_pos + 1;
+
+        if (c == '+' && !in_number) {
+            in_number = true;
+            sign = 1;
+            value = 0;
+            continue;
+        }
+
+        if (c == ',' || c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            if (in_number) {
+                if (pixel_count >= InferenceModel::kImageSize) {
+                    return "Input has more values than expected";
+                }
+                long final_value = sign * value;
+                if (final_value < SHRT_MIN || final_value > SHRT_MAX) {
+                    return "Value out of int16 range at index " + String(pixel_count);
+                }
+                image_array[pixel_count++] = static_cast<int16_t>(final_value);
+                in_number = false;
+                sign = 1;
+                value = 0;
+            }
+            continue;
+        }
+
+        return "Invalid character in q_pixels payload";
+    }
+
+    if (in_number) {
+        if (pixel_count >= InferenceModel::kImageSize) {
+            return "Input has more values than expected";
+        }
+        long final_value = sign * value;
+        if (final_value < SHRT_MIN || final_value > SHRT_MAX) {
+            return "Value out of int16 range at index " + String(pixel_count);
+        }
+        image_array[pixel_count++] = static_cast<int16_t>(final_value);
     }
     
-    if (pixel_count != MNISTModel::kImageSize) {
-        return "Array must contain exactly " + String(MNISTModel::kImageSize) +
-               " pixels (28x28), received: " + String(pixel_count);
+    if (pixel_count != InferenceModel::kImageSize) {
+        return "Array must contain exactly " + String(InferenceModel::kImageSize) +
+               " values (224x224x3), received: " + String(pixel_count);
     }
     
     return ""; // Success
@@ -555,7 +672,7 @@ void setup() {
     Serial.begin(115200);
     delay(2000);
     
-    Serial.println("\n=== Fashion-MNIST TensorFlow Lite WiFi API ===");
+    Serial.println("\n=== CIFAR-10 MobileNetV2 TensorFlow Lite WiFi API ===");
     Serial.printf("Initial free heap: %d bytes\n", esp_get_free_heap_size());
     Serial.printf("Available PSRAM: %d bytes\n", ESP.getPsramSize());
     
@@ -566,7 +683,7 @@ void setup() {
     }
     
     // Initialize model
-    if (!initialize_mnist_model()) {
+    if (!initialize_model()) {
         Serial.println("Model initialization failed!");
         return;
     }

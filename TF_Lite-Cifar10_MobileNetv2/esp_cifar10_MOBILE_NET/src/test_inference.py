@@ -9,29 +9,30 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 import numpy as np
 import requests
 import tensorflow as tf
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
 # Configuration
 ESP32_IP = "192.168.3.22"
 ESP32_PORT = 80
 
-REQUEST_TIMEOUT = 15.0
+REQUEST_TIMEOUT = 60.0
 SAVE_PLOT_PATH = Path(__file__).resolve().parent / "inference_result.png"
 INPUT_INFO_PATH = Path(__file__).resolve().parent / "input_info.json"
 SHOW_PLOT = True
 
 
-IMAGE_INDEX = 55
+IMAGE_INDEX = 57
 CLASS_NAMES = [
-    "T-shirt/top",
-    "Trouser",
-    "Pullover",
-    "Dress",
-    "Coat",
-    "Sandal",
-    "Shirt",
-    "Sneaker",
-    "Bag",
-    "Ankle boot",
+    "airplane",
+    "automobile",
+    "bird",
+    "cat",
+    "deer",
+    "dog",
+    "frog",
+    "horse",
+    "ship",
+    "truck",
 ]
 
 
@@ -47,13 +48,13 @@ def get_prediction_info(prediction_data: dict) -> tuple[int | str, str]:
     return predicted_class, predicted_name
 
 
-def get_fashion_image(index: int) -> tuple[np.ndarray, int]:
-    (_, _), (x_test, y_test) = tf.keras.datasets.fashion_mnist.load_data()
+def get_cifar10_image(index: int) -> tuple[np.ndarray, int]:
+    (_, _), (x_test, y_test) = tf.keras.datasets.cifar10.load_data()
     if index < 0 or index >= len(x_test):
         raise IndexError(
             f"Index {index} is out of range for test dataset (0-{len(x_test) - 1})."
         )
-    return x_test[index], int(y_test[index])
+    return x_test[index], int(y_test[index][0])
 
 
 def load_input_info(path: Path) -> dict:
@@ -66,12 +67,20 @@ def quantize_image(image_data: np.ndarray, input_info: dict) -> np.ndarray:
     scale = float(input_info["scale"])
     zero_point = int(input_info["zero_point"])
     dtype = str(input_info["dtype"])
+    target_h, target_w = map(int, input_info["size"])
 
     if scale <= 0:
         raise ValueError(f"Invalid quantization scale: {scale}")
 
-    normalized = image_data.astype(np.float32) / 255.0
-    quantized = np.round(normalized / scale + zero_point)
+    image_f32 = image_data.astype(np.float32)
+    if image_f32.ndim == 2:
+        image_f32 = np.expand_dims(image_f32, axis=-1)
+    if image_f32.shape[-1] == 1:
+        image_f32 = np.repeat(image_f32, 3, axis=-1)
+
+    resized = tf.image.resize(image_f32, (target_h, target_w)).numpy()
+    preprocessed = preprocess_input(resized)
+    quantized = np.round(preprocessed / scale + zero_point)
 
     if dtype == "int8":
         return np.clip(quantized, -128, 127).astype(np.int8)
@@ -96,6 +105,10 @@ def print_results(image_index: int, true_label: int, prediction_data: dict) -> N
     confidence = float(prediction_data.get("confidence", 0.0))
     success = bool(prediction_data.get("success", False))
     error_message = prediction_data.get("error_message", "")
+    receive_ms = prediction_data.get("receive_ms")
+    parse_ms = prediction_data.get("parse_ms")
+    inference_ms = prediction_data.get("inference_ms")
+    total_ms = prediction_data.get("total_ms")
     true_label_name = class_name_from_index(true_label)
 
     print("\n--- Inference Results ---")
@@ -104,6 +117,11 @@ def print_results(image_index: int, true_label: int, prediction_data: dict) -> N
     print(f"ESP32 prediction: {predicted_class} ({pred_label_name})")
     print(f"Confidence: {confidence:.4f}")
     print(f"Success: {success}")
+    if receive_ms is not None:
+        print(
+            f"Server timings (ms): receive={receive_ms}, "
+            f"parse={parse_ms}, inference={inference_ms}, total={total_ms}"
+        )
     if error_message:
         print(f"Error message: {error_message}")
     print("-------------------------\n")
@@ -146,7 +164,7 @@ def maybe_save_plot(
     predicted_class, pred_label_name = get_prediction_info(prediction_data)
     true_label_name = class_name_from_index(true_label)
 
-    plt.imshow(image, cmap="gray")
+    plt.imshow(image.astype(np.uint8))
     plt.title(
         f"Sent to ESP32\nTrue: {true_label_name} ({true_label}) | Pred: {pred_label_name} ({predicted_class})"
     )
@@ -164,7 +182,7 @@ def maybe_save_plot(
 
 def main() -> None:
     api_url = f"http://{ESP32_IP}:{ESP32_PORT}/predict"
-    image, true_label = get_fashion_image(IMAGE_INDEX)
+    image, true_label = get_cifar10_image(IMAGE_INDEX)
     result = send_image_for_inference(api_url, image, REQUEST_TIMEOUT)
     print_results(IMAGE_INDEX, true_label, result)
 

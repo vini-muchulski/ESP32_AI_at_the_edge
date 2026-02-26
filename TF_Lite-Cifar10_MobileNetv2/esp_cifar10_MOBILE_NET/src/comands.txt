@@ -1,21 +1,21 @@
-Commands to generate an embeddable header for ESP32-S3 (Fashion-MNIST int8), compatible with `src/main.cpp`:
+Commands to generate an embeddable header for ESP32-S3 (CIFAR10 Mobilenet v2 int8), compatible with `src/main.cpp`:
 
 # 1) Generate a C header from the int8-quantized TFLite model
-# 2) Rename symbols to match what main.cpp expects
-# 3) Add PROGMEM to keep the model in Flash memory
+# 2) Keep generated symbols as-is (main.cpp now expects model_simple_int8_tflite)
+# 3) Add const + PROGMEM to keep the model in Flash memory (avoid DRAM overflow)
 # 4) (Optional) Verify that final symbols are correct
 
 
 cd src
 
-xxd -i model_simple_int8.tflite > mnist_model_data.h
+xxd -i model_simple_int8.tflite > model_simple_int8.h
 
 
-sed -i 's/model_simple_int8_tflite/mnist_cnn_small_int8_tflite/g' mnist_model_data.h
+sed -i '1i #include <pgmspace.h>\n' model_simple_int8.h
+sed -i 's/^unsigned char /const unsigned char /' model_simple_int8.h
+sed -i 's/^unsigned int /const unsigned int /' model_simple_int8.h
+sed -i 's/\[\] =/[] PROGMEM =/' model_simple_int8.h
 
 
-sed -i '1i #include <pgmspace.h>\n' mnist_model_data.h
-sed -i 's/\[\] =/[] PROGMEM =/' mnist_model_data.h
-
-
-grep -n "mnist_cnn_small_int8_tflite" mnist_model_data.h
+grep -n "model_simple_int8_tflite" model_simple_int8.h
+grep -n "^const unsigned char model_simple_int8_tflite\\[\\] PROGMEM = {" model_simple_int8.h
