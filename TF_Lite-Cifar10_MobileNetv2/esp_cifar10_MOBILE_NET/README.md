@@ -2,10 +2,21 @@
 
 This project runs an INT8-quantized MobileNetV2 model on an ESP32-S3 and exposes inference over Wi-Fi (`POST /predict`).
 
+## Results
+
+Example outputs from `src/results`:
+
+![Inference Result](src/results/inference_result.png)
+
+![Inference Result 2](src/results/inference_result1.png)
+
+![Evaluation Result](src/results/evaluate_results.png)
+
 ## What this project includes
 
 - ESP32 firmware with TensorFlow Lite Micro: `src/main.cpp`
 - Training/export script (MobileNetV2 -> `.tflite`): `src/cifar10-mobilenetv2-tflite-int8.py`
+- Kaggle notebook (training/export reference): [cifar10-mobilenetv2-tflite-int8](https://www.kaggle.com/code/vinimuchulski/cifar10-mobilenetv2-tflite-int8)
 - Header generation helper commands: `src/comands.txt`
 - Single inference client: `src/test_inference.py`
 - Batch evaluation client: `src/teste_evalute.py`
@@ -66,14 +77,3 @@ Run batch evaluation:
 cd src
 python teste_evalute.py
 ```
-
-## Results
-
-Example outputs from `src/results`:
-
-![Inference Result](src/results/inference_result.png)
-
-![Inference Result 2](src/results/inference_result1.png)
-
-![Evaluation Result](src/results/evaluate_results.png)
-

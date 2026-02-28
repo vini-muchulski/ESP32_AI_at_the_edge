@@ -49,7 +49,7 @@ Face detection using **ESP-DL**—a lightweight framework from Espressif for inf
 
 ## Hardware
 
-*   I used the ESP32 for the Sine project.
+
 *   I used the ESP32-S3 for the embedded CNN projects due to the presence of PSRAM in this type of microcontroller.
 
 ## 📄 License
