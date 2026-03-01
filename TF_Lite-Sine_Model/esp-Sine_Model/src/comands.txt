@@ -1,0 +1,14 @@
+Commands to generate an embeddable header for ESP32, compatible with `src/main.cpp`:
+
+# 1) Generate a C header from the TFLite model
+# 2) Add PROGMEM to keep the model in Flash memory
+# 3) (Optional) Verify final symbols
+
+cd src
+
+xxd -i model_sine.tflite > model_sine_float32.h
+
+sed -i '1i #include <pgmspace.h>\n' model_sine_float32.h
+sed -i 's/\[\] =/[] PROGMEM =/' model_sine_float32.h
+
+grep -n "model_sine_tflite" model_sine_float32.h

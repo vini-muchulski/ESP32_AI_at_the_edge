@@ -1,90 +1,83 @@
-/******************************************************************************
- * Inferência TensorFlow Lite Micro no ESP32-C3
- * Modelo de seno — compatível com FLOAT32 **ou** INT8/UINT8
- * API WiFi para cálculo de seno
- ******************************************************************************/
+/*
+ * TensorFlow Lite Micro inference on ESP32-C3
+ * Sine model compatible with FLOAT32 or INT8/UINT8
+ * Wi-Fi API for sine calculation
+ */
 
 #include <WiFi.h>
-#include <WebServer.h> 
+#include <WebServer.h>
 
 #include <Arduino.h>
-#include <math.h>                     // para M_PI
+#include <math.h>  // for M_PI
 
-const char* ssid = "REDE WIFI";
-const char* password = "PASSWORD";
+const char* ssid = "ssid";
+const char* password = "password";
 
-// Servidor web na porta 80
+// Web server on port 80
 WebServer server(80);
 
-// ───────── TensorFlow Lite Micro ──────────────────────────────────────────────
 #include "tensorflow/lite/micro/micro_log.h"
 #include "tensorflow/lite/micro/tflite_bridge/micro_error_reporter.h"
 #include "tensorflow/lite/micro/all_ops_resolver.h"
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 
-// ───────── Modelo convertido (escolha aqui) ──────────────────────────────────
-#include "modelo_seno_float32.h"  
+// Converted model include
+#include "model_sine_float32.h"
 
-#define modelo_seno_tflite      modelo_seno_float32_tflite
-#define modelo_seno_tflite_len  modelo_seno_float32_tflite_len
+// TFLM memory arena
+constexpr int kTensorArenaSize = 12 * 1024;  // 12 kB
+static uint8_t tensor_arena[kTensorArenaSize];
 
-// ───────── Arena de memória do TFLM ──────────────────────────────────────────
-constexpr int   kTensorArenaSize = 12 * 1024;   // 12 kB
-static   uint8_t tensor_arena[kTensorArenaSize];
-
-// ───────── Variáveis globais ─────────────────────────────────────────────────
+// Global variables
 namespace {
   tflite::MicroErrorReporter micro_error_reporter;
-  tflite::ErrorReporter*     error_reporter = &micro_error_reporter;
+  tflite::ErrorReporter* error_reporter = &micro_error_reporter;
 
-  const tflite::Model*       model          = nullptr;
-  tflite::AllOpsResolver     resolver;                  // todas as ops
-  tflite::MicroInterpreter*  interpreter     = nullptr;
+  const tflite::Model* model = nullptr;
+  tflite::AllOpsResolver resolver;  // all operators
+  tflite::MicroInterpreter* interpreter = nullptr;
 
-  TfLiteTensor*              input          = nullptr;
-  TfLiteTensor*              output         = nullptr;
+  TfLiteTensor* input = nullptr;
+  TfLiteTensor* output = nullptr;
 
-  // Parâmetros de quantização (válidos só se o modelo for INT8/UINT8)
-  float     in_scale   = 1.0f;
-  int32_t   in_zp      = 0;
-  float     out_scale  = 1.0f;
-  int32_t   out_zp     = 0;
-  bool      is_quant   = false;
+  // Quantization parameters (valid only for INT8/UINT8 models)
+  float in_scale = 1.0f;
+  int32_t in_zp = 0;
+  float out_scale = 1.0f;
+  int32_t out_zp = 0;
+  bool is_quant = false;
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// FUNÇÃO DE INFERÊNCIA
-// ═════════════════════════════════════════════════════════════════════════════
-float inferirSeno(float x) {
-  // ─── 1. Escreve no tensor de entrada ──────────────────────────────────
+float inferSine(float x) {
+  // 1) Write input tensor
   if (is_quant) {
     int32_t q_in = static_cast<int32_t>(roundf(x / in_scale) + in_zp);
 
-    // Clampa se exceder range do tipo
+    // Clamp to numeric type range
     if (input->type == kTfLiteInt8) {
       q_in = max(-128, min(127, q_in));
       input->data.int8[0] = static_cast<int8_t>(q_in);
-    } else {                         // UINT8
+    } else {  // UINT8
       q_in = max(0, min(255, q_in));
       input->data.uint8[0] = static_cast<uint8_t>(q_in);
     }
   } else {
-    input->data.f[0] = x;            // modelo float32 original
+    input->data.f[0] = x;  // original float32 model
   }
 
-  // ─── 2. Invoke ─────────────────────────────────────────────────────────
+  // 2) Invoke
   if (interpreter->Invoke() != kTfLiteOk) {
-    TF_LITE_REPORT_ERROR(error_reporter, "Invoke() falhou.");
-    return NAN; // Retorna NaN em caso de erro
+    TF_LITE_REPORT_ERROR(error_reporter, "Invoke() failed.");
+    return NAN;
   }
 
-  // ─── 3. Lê a saída ─────────────────────────────────────────────────────
+  // 3) Read output
   float y;
   if (is_quant) {
     int32_t q_out = (output->type == kTfLiteInt8)
-                      ? output->data.int8[0]
-                      : output->data.uint8[0];
+                        ? output->data.int8[0]
+                        : output->data.uint8[0];
     y = (q_out - out_zp) * out_scale;
   } else {
     y = output->data.f[0];
@@ -93,172 +86,148 @@ float inferirSeno(float x) {
   return y;
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// HANDLERS DA API
-// ═════════════════════════════════════════════════════════════════════════════
-
-// Handler para calcular seno
-void handleSeno() {
-  // Verifica se o parâmetro 'angulo' foi enviado
-  if (!server.hasArg("angulo")) {
-    server.send(400, "application/json", "{\"erro\":\"Parâmetro 'angulo' não encontrado\"}");
+// API handler for sine calculation
+void handleSine() {
+  if (!server.hasArg("angle")) {
+    server.send(400, "application/json", "{\"error\":\"Missing 'angle' query parameter\"}");
     return;
   }
 
-  // Converte o parâmetro para float
-  float angulo_graus = server.arg("angulo").toFloat();
-  
-  // Converte graus para radianos
-  float angulo_rad = (angulo_graus * M_PI) / 180.0;
-  
-  // Faz a inferência
-  float seno_resultado = inferirSeno(angulo_rad);
-  
-  // Verifica se houve erro na inferência
-  if (isnan(seno_resultado)) {
-    server.send(500, "application/json", "{\"erro\":\"Erro na inferência do modelo\"}");
-    Serial.printf("Erro na inferência para ângulo: %.2f graus\n", angulo_graus);
+  float angle_degrees = server.arg("angle").toFloat();
+  float angle_rad = (angle_degrees * M_PI) / 180.0f;
+  float sine_result = inferSine(angle_rad);
+
+  if (isnan(sine_result)) {
+    server.send(500, "application/json", "{\"error\":\"Model inference failed\"}");
+    Serial.printf("Inference error for angle: %.2f degrees\n", angle_degrees);
     return;
   }
-  
-  // Imprime no terminal
-  Serial.printf("sin(%.2f°) = %.6f\n", angulo_graus, seno_resultado);
-  
-  // Monta resposta JSON
-  String resposta = "{";
-  resposta += "\"angulo_graus\":" + String(angulo_graus, 2) + ",";
-  resposta += "\"seno\":" + String(seno_resultado, 6);
-  resposta += "}";
-  
-  // Envia resposta
-  server.send(200, "application/json", resposta);
+
+  Serial.printf("sin(%.2f deg) = %.6f\n", angle_degrees, sine_result);
+
+  String response_json = "{";
+  response_json += "\"angle_degrees\":" + String(angle_degrees, 2) + ",";
+  response_json += "\"sine\":" + String(sine_result, 6);
+  response_json += "}";
+
+  server.send(200, "application/json", response_json);
 }
 
-// Handler para página de ajuda
+// API root help page
 void handleRoot() {
   String html = "<html><body>";
-  html += "<h1>API de Cálculo de Seno - ESP32</h1>";
-  html += "<p>Para calcular o seno de um ângulo, use:</p>";
-  html += "<p><strong>GET /seno?angulo=VALOR</strong></p>";
-  html += "<p>Exemplo: <a href='/seno?angulo=30'>/seno?angulo=30</a></p>";
-  html += "<p>Exemplo: <a href='/seno?angulo=45'>/seno?angulo=45</a></p>";
-  html += "<p>Exemplo: <a href='/seno?angulo=90'>/seno?angulo=90</a></p>";
+  html += "<h1>ESP32 Sine API</h1>";
+  html += "<p>To calculate sine, use:</p>";
+  html += "<p><strong>GET /sine?angle=VALUE</strong></p>";
+  html += "<p>Example: <a href='/sine?angle=30'>/sine?angle=30</a></p>";
+  html += "<p>Example: <a href='/sine?angle=45'>/sine?angle=45</a></p>";
+  html += "<p>Example: <a href='/sine?angle=90'>/sine?angle=90</a></p>";
   html += "</body></html>";
-  
+
   server.send(200, "text/html", html);
 }
 
-// Handler para 404
+// 404 handler
 void handleNotFound() {
-  server.send(404, "application/json", "{\"erro\":\"Endpoint não encontrado\"}");
+  server.send(404, "application/json", "{\"error\":\"Endpoint not found\"}");
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// FUNÇÃO DE TESTE INICIAL
-// ═════════════════════════════════════════════════════════════════════════════
-void testeInicialInferencia() {
-  Serial.println("Executando teste inicial de inferência...");
-  
-  // Ângulos de teste (rad)
+void runInitialInferenceTest() {
+  Serial.println("Running initial inference test...");
+
+  // Test angles (radians)
   constexpr float angles[] = { M_PI/3, M_PI/6, M_PI/4, M_PI/2, M_PI };
-  constexpr int   num_angles = sizeof(angles) / sizeof(angles[0]);
-  
+  constexpr int num_angles = sizeof(angles) / sizeof(angles[0]);
+
   for (int i = 0; i < num_angles; ++i) {
     float x = angles[i];
-    float y = inferirSeno(x);
-    
-    // Verifica se houve erro na inferência
+    float y = inferSine(x);
+
     if (!isnan(y)) {
-      float angulo_graus = (x * 180.0) / M_PI;
-      Serial.printf("sin(%.2f°) = %.6f\n", angulo_graus, y);
+      float angle_degrees = (x * 180.0f) / M_PI;
+      Serial.printf("sin(%.2f deg) = %.6f\n", angle_degrees, y);
     } else {
-      Serial.printf("Erro na inferência para x=%f\n", x);
+      Serial.printf("Inference error for x=%f\n", x);
     }
   }
   Serial.println("----------------------------");
-  Serial.println("Teste inicial concluído!\n");
+  Serial.println("Initial test completed.\n");
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// SETUP
-// ═════════════════════════════════════════════════════════════════════════════
 void setup() {
   Serial.begin(115200);
   delay(200);
 
-  // 1) Carrega o modelo da flash
-  model = tflite::GetModel(modelo_seno_tflite);
+  // 1) Load model from flash
+  model = tflite::GetModel(model_sine_tflite);
   if (model->version() != TFLITE_SCHEMA_VERSION) {
     TF_LITE_REPORT_ERROR(error_reporter,
-        "Modelo v%d ≠ Schema v%d", model->version(), TFLITE_SCHEMA_VERSION);
+                         "Model v%d != Schema v%d", model->version(), TFLITE_SCHEMA_VERSION);
     while (true);
   }
 
-  // 2) Intérprete + alocação de tensores
+  // 2) Interpreter + tensor allocation
   static tflite::MicroInterpreter static_interpreter(
       model, resolver, tensor_arena, kTensorArenaSize);
   interpreter = &static_interpreter;
 
   if (interpreter->AllocateTensors() != kTfLiteOk) {
-    TF_LITE_REPORT_ERROR(error_reporter, "AllocateTensors() falhou.");
+    TF_LITE_REPORT_ERROR(error_reporter, "AllocateTensors() failed.");
     while (true);
   }
 
-  // 3) Ponteiros de entrada/saída
-  input  = interpreter->input(0);
+  // 3) Input/output tensor pointers
+  input = interpreter->input(0);
   output = interpreter->output(0);
 
-  // 4) Checa se é quantizado
-  is_quant = (input->type == kTfLiteInt8  || input->type == kTfLiteUInt8);
+  // 4) Check if model is quantized
+  is_quant = (input->type == kTfLiteInt8 || input->type == kTfLiteUInt8);
 
   if (is_quant) {
-    in_scale   = input->params.scale;
-    in_zp      = input->params.zero_point;
-    out_scale  = output->params.scale;
-    out_zp     = output->params.zero_point;
+    in_scale = input->params.scale;
+    in_zp = input->params.zero_point;
+    out_scale = output->params.scale;
+    out_zp = output->params.zero_point;
   }
 
-  // 5) Log rápido
+  // 5) Quick logs
   Serial.printf("INPUT  type=%d  scale=%f  zp=%d\n",
-                input->type,  in_scale,  in_zp);
+                input->type, in_scale, in_zp);
   Serial.printf("OUTPUT type=%d  scale=%f  zp=%d\n",
                 output->type, out_scale, out_zp);
-  Serial.println("Modelo TensorFlow Lite carregado com sucesso!");
+  Serial.println("TensorFlow Lite model loaded successfully.");
 
-  // Conecta ao WiFi
+  // Connect to Wi-Fi
   WiFi.begin(ssid, password);
-  Serial.print("Conectando ao WiFi");
-  
+  Serial.print("Connecting to Wi-Fi");
+
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
-  
+
   Serial.println();
-  Serial.printf("WiFi conectado! IP: %s\n", WiFi.localIP().toString().c_str());
+  Serial.printf("Wi-Fi connected. IP: %s\n", WiFi.localIP().toString().c_str());
 
-  // Configura rotas da API
+  // Configure API routes
   server.on("/", handleRoot);
-  server.on("/seno", handleSeno);
+  server.on("/sine", handleSine);
   server.onNotFound(handleNotFound);
-  
-  // Executa teste inicial de inferência
-  testeInicialInferencia();
 
-  // Inicia servidor
+  // Run initial inference test
+  runInitialInferenceTest();
+
+  // Start server
   server.begin();
-  Serial.println("Servidor HTTP iniciado!");
-  Serial.println("Use: GET /seno?angulo=VALOR");
-  Serial.println("Exemplo: http://" + WiFi.localIP().toString() + "/seno?angulo=30");
+  Serial.println("HTTP server started.");
+  Serial.println("Use: GET /sine?angle=VALUE");
+  Serial.println("Example: http://" + WiFi.localIP().toString() + "/sine?angle=30");
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// LOOP
-// ═════════════════════════════════════════════════════════════════════════════
 void loop() {
-  // Processa requisições HTTP
+  // Process HTTP requests
   server.handleClient();
-  
-  // Pequeno delay para não sobrecarregar
+
+  // Small delay to avoid overload
   delay(2);
 }
